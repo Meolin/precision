@@ -9,6 +9,15 @@ export interface TerrainHit {
 
 /** Circle vs occupied cell rectangles, including projectile radius. */
 export function circleTouchesTerrain(terrain: TerrainGrid, center: Vec2, radius: number): boolean {
+  return findTerrainContactCell(terrain, center, radius) !== null;
+}
+
+/** Contact geometry only. The center may still be in Air when the rim hits a cell. */
+export function findTerrainContactCell(
+  terrain: TerrainGrid,
+  center: Vec2,
+  radius: number,
+): Vec2 | null {
   const size = terrain.cellSizeMeters;
   const min = terrain.worldToCell({ x: center.x - radius, y: center.y - radius });
   const max = terrain.worldToCell({ x: center.x + radius, y: center.y + radius });
@@ -17,10 +26,11 @@ export function circleTouchesTerrain(terrain: TerrainGrid, center: Vec2, radius:
       if (!terrain.isSolid(col, row)) continue;
       const nearestX = clamp(center.x, col * size, (col + 1) * size);
       const nearestY = clamp(center.y, row * size, (row + 1) * size);
-      if ((center.x - nearestX) ** 2 + (center.y - nearestY) ** 2 <= radius ** 2) return true;
+      if ((center.x - nearestX) ** 2 + (center.y - nearestY) ** 2 <= radius ** 2)
+        return { x: col, y: row };
     }
   }
-  return false;
+  return null;
 }
 
 /** Swept sampling <= half a cell, then refine the first contact interval. */

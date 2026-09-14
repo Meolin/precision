@@ -63,7 +63,7 @@ describe('impact pipeline', () => {
     });
     expect(event.position).toEqual(hit.position);
     expect(event.position.y).toBeCloseTo(4.88, 2);
-    expect(shell.alive).toBe(false);
+    expect(shell.alive).toBe(true);
     expect(state.terrain.cells).toEqual(cells);
     shell.velocity.y = 0;
     shell.position.x = 0;
@@ -72,22 +72,31 @@ describe('impact pipeline', () => {
   });
 
   it('resolves a known event into semantic damage and supports disabled destruction', () => {
-    const damage = resolveImpact(impact, impactDefinitions.basicImpact);
+    const { state, shell } = contactScene();
+    const resolution = resolveImpact(impact, impactDefinitions.basicImpact, shell, state.terrain);
+    const damage = resolution.terrainDamageEvents[0];
+    expect(resolution.type).toBe('stop');
     expect(damage).toEqual({
       type: 'terrainDamage',
       tick: 7,
       sourceProjectileId: 2,
-      center: { x: 5, y: 5 },
-      radiusMeters: 1.05,
+      operation: { type: 'circle', center: { x: 5, y: 5 }, radiusMeters: 1.05 },
       energyJ: 100,
     });
-    expect(damage?.center).not.toBe(impact.position);
+    expect(damage?.operation.type).toBe('circle');
+    if (damage?.operation.type === 'circle')
+      expect(damage.operation.center).not.toBe(impact.position);
     expect(
-      resolveImpact(impact, {
-        id: 'basicImpact',
-        terrainDamage: { ...impactDefinitions.basicImpact.terrainDamage, enabled: false },
-      }),
-    ).toBeNull();
+      resolveImpact(
+        impact,
+        {
+          id: 'basicImpact',
+          terrainDamage: { ...impactDefinitions.basicImpact.terrainDamage, enabled: false },
+        },
+        shell,
+        state.terrain,
+      ).terrainDamageEvents,
+    ).toEqual([]);
     expect(craterRadius(-100, impactDefinitions.basicImpact.terrainDamage)).toBe(0.8);
     expect(craterRadius(1e12, impactDefinitions.basicImpact.terrainDamage)).toBe(3);
   });
@@ -96,7 +105,11 @@ describe('impact pipeline', () => {
     const { config, state } = contactScene();
     const replayTerrain = new TerrainGrid(20, 20, 1, state.terrain.cells.slice());
     stepSimulation(state, config, 0.2);
-    expect(state.events.map((event) => event.type)).toEqual(['projectileImpact', 'terrainDamage']);
+    expect(state.events.map((event) => event.type)).toEqual([
+      'projectileImpact',
+      'impactResolved',
+      'terrainDamage',
+    ]);
     const damage = state.events.find((event) => event.type === 'terrainDamage')!;
     expect(damage.tick).toBe(7);
     expect(state.projectiles).toHaveLength(0);

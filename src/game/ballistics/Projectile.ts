@@ -4,7 +4,8 @@ import type { EntityId, Vec2 } from '../math/Vec2';
 import type { ImpactDefinitionId } from '../impacts/ImpactDefinition';
 import type { WeaponId } from '../weapons/WeaponDefinition';
 import { resolveWeapon } from '../weapons/WeaponSettings';
-import type { ProjectileDefinitionId } from './ProjectileDefinition';
+import type { ProjectileDefinition, ProjectileDefinitionId } from './ProjectileDefinition';
+import type { ActivePenetrationState } from '../impacts/PenetrationResult';
 
 export interface ProjectileState {
   id: EntityId;
@@ -23,6 +24,8 @@ export interface ProjectileState {
   lifetimeSeconds: number;
   maxLifetimeSeconds: number;
   alive: boolean;
+  readonly penetration?: ProjectileDefinition['penetration'];
+  penetrationState?: ActivePenetrationState;
 }
 
 export function createProjectile(
@@ -53,5 +56,6 @@ export function createProjectile(
     lifetimeSeconds: 0,
     maxLifetimeSeconds: projectile.maxLifetimeSeconds,
     alive: true,
+    ...(projectile.penetration ? { penetration: { ...projectile.penetration } } : {}),
   };
 }

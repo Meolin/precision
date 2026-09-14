@@ -1,10 +1,10 @@
-import type { EntityId, Vec2 } from '../math/Vec2';
+import type { EntityId } from '../math/Vec2';
+import type { TerrainDamageOperation } from './TerrainDamageOperation';
 
 export interface TerrainDamageEvent {
   type: 'terrainDamage';
   tick: number;
   sourceProjectileId: EntityId;
-  center: Vec2;
-  radiusMeters: number;
+  operation: TerrainDamageOperation;
   energyJ: number;
 }

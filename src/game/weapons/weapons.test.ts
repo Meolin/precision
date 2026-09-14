@@ -185,7 +185,7 @@ describe('weapon commands and preview', () => {
     expect(runtime.getState().cannon.nextFireTimeSeconds).toBe(0);
   });
 
-  it.each(['basicCannon', 'mortar'] as const)(
+  it.each(['basicCannon', 'mortar', 'heavyPenetrator'] as const)(
     'uses identical live and preview positions for %s',
     (weaponId) => {
       const config = cloneConfig();
@@ -197,8 +197,9 @@ describe('weapon commands and preview', () => {
       const shell = createProjectile(state.cannon, config, 2, 0);
       const positions = [{ ...shell.position }];
       for (let tick = 0; tick < 1200 && shell.alive; tick++) {
-        advanceProjectile(shell, state.terrain, config, 1 / 60);
+        const hit = advanceProjectile(shell, state.terrain, config, 1 / 60);
         positions.push({ ...shell.position });
+        if (hit) break;
       }
       for (const point of preview.points) expect(positions).toContainEqual(point);
       expect(preview.impact).toEqual(shell.position);

@@ -22,10 +22,13 @@ export function useGameInput(
       if (
         point.x < 0 ||
         point.y < 0 ||
-        point.x > config.world.widthMeters ||
-        point.y > config.world.heightMeters
-      )
+        point.x >= config.world.widthMeters ||
+        point.y >= config.world.heightMeters
+      ) {
+        runtime.setCursorPosition(null);
         return false;
+      }
+      runtime.setCursorPosition(point);
       const cannon = runtime.getState().cannon;
       runtime.enqueueCommand({
         type: 'setAim',
@@ -51,12 +54,18 @@ export function useGameInput(
       switch (event.code) {
         case 'Digit1':
         case 'Digit2':
+        case 'Digit3':
           event.preventDefault();
           if (!event.repeat)
             runtime.enqueueCommand({
               type: 'setWeapon',
               cannonId: cannon.id,
-              weaponId: event.code === 'Digit1' ? 'basicCannon' : 'mortar',
+              weaponId:
+                event.code === 'Digit1'
+                  ? 'basicCannon'
+                  : event.code === 'Digit2'
+                    ? 'mortar'
+                    : 'heavyPenetrator',
             });
           break;
         case 'KeyA':
@@ -87,10 +96,16 @@ export function useGameInput(
           break;
       }
     };
+    const clearCursor = () => runtime.setCursorPosition(null);
+    element.addEventListener('pointerleave', clearCursor);
+    window.addEventListener('blur', clearCursor);
     element.addEventListener('pointermove', aim);
     element.addEventListener('pointerdown', fire);
     window.addEventListener('keydown', keydown);
     return () => {
+      clearCursor();
+      element.removeEventListener('pointerleave', clearCursor);
+      window.removeEventListener('blur', clearCursor);
       element.removeEventListener('pointermove', aim);
       element.removeEventListener('pointerdown', fire);
       window.removeEventListener('keydown', keydown);

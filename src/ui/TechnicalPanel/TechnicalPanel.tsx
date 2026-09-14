@@ -98,6 +98,7 @@ const debugLabels: { key: keyof DebugOptions; label: string }[] = [
   { key: 'impact', label: 'Маркер попадания' },
   { key: 'grid', label: 'Сетка рельефа' },
   { key: 'samples', label: 'Точки проверки столкновений' },
+  { key: 'penetration', label: 'Путь пробития' },
 ];
 
 export function TechnicalPanel({
@@ -147,7 +148,7 @@ export function TechnicalPanel({
         <section className="settings-group">
           <h3>
             <label htmlFor="weapon-selector">Оружие</label>
-            <span>1 / 2</span>
+            <span>1 / 2 / 3</span>
           </h3>
           <select
             id="weapon-selector"
@@ -210,6 +211,70 @@ export function TechnicalPanel({
             ))}
           <p className="settings-note">Применяется при попадании снарядов этого оружия.</p>
         </section>
+        <section className="settings-group">
+          <h3>
+            <span>Пробитие</span>
+            <span>PENETRATION</span>
+          </h3>
+          <dl className="inspector-values">
+            <div>
+              <dt>Включено</dt>
+              <dd>{data.penetration?.enabled ? 'Да' : 'Нет'}</dd>
+            </div>
+            <div>
+              <dt>Мощность пробития</dt>
+              <dd>{formatNumber(data.penetration?.penetrationPower ?? null, 1)} ×</dd>
+            </div>
+            <div>
+              <dt>Максимальная глубина</dt>
+              <dd>{formatNumber(data.penetration?.maxPenetrationDistanceMeters ?? null, 1)} m</dd>
+            </div>
+            <div>
+              <dt>Радиус канала</dt>
+              <dd>{formatNumber(data.channelRadius, 2)} m</dd>
+            </div>
+            <div>
+              <dt>Порог энергии выхода</dt>
+              <dd>{formatNumber(data.penetration?.minimumExitEnergyJ ?? null)} J</dd>
+            </div>
+          </dl>
+          <p className="settings-note">
+            Профиль {data.weaponName}. Прогноз заканчивается у первого касания рельефа.
+          </p>
+          <p className="settings-note">
+            Минимальный радиус канала учитывает размер снаряда и ячейки.
+          </p>
+        </section>
+        <section className="settings-group" aria-label="Материал под курсором">
+          <h3>
+            <span>Материал под курсором</span>
+            <span>MATERIAL</span>
+          </h3>
+          <dl className="inspector-values">
+            <div>
+              <dt>Материал</dt>
+              <dd>{data.cursorMaterial?.name ?? '—'}</dd>
+            </div>
+            <div>
+              <dt>Сопротивление пробитию</dt>
+              <dd>{formatNumber(data.cursorMaterial?.penetrationResistance ?? null)} J/m</dd>
+            </div>
+            <div>
+              <dt>Blast resistance</dt>
+              <dd>{formatNumber(data.cursorMaterial?.blastResistance ?? null, 1)}</dd>
+            </div>
+            <div>
+              <dt>Твёрдость</dt>
+              <dd>{formatNumber(data.cursorMaterial?.hardness ?? null, 1)}</dd>
+            </div>
+          </dl>
+          <p className="settings-note">
+            {data.cursor
+              ? `x: ${formatNumber(data.cursor.x, 2)} m · y: ${formatNumber(data.cursor.y, 2)} m`
+              : 'Наведите курсор на полигон: Soil — грунт, Rock — скала.'}
+          </p>
+          <p className="settings-note">Blast resistance пока справочная величина.</p>
+        </section>
         <section className="settings-group debug-group">
           <h3>
             <span>Визуализация</span>
@@ -225,6 +290,10 @@ export function TechnicalPanel({
               <span>{label}</span>
             </label>
           ))}
+          <p className="settings-note">
+            Путь записывается при включённой опции: вход — оранжевый, выход — зелёный, остановка —
+            розовая.
+          </p>
         </section>
       </div>
       <div className="panel-actions">

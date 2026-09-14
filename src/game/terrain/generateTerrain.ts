@@ -1,6 +1,7 @@
 import type { GameConfig } from '../config/GameConfig';
 import { clamp } from '../math/Vec2';
 import { TerrainGrid } from './TerrainGrid';
+import { TerrainMaterialId } from './TerrainMaterialId';
 
 export function createSeededRandom(seed: number): () => number {
   let value = seed >>> 0;
@@ -19,6 +20,8 @@ export function generateTerrain(config: GameConfig, seed: number): TerrainGrid {
     surfaceHeightFraction,
     waveAmplitudeMeters,
     noiseAmplitudeMeters,
+    rockDepthMeters,
+    rockVariationMeters,
   } = config.terrain;
   const columns = Math.ceil(widthMeters / cell);
   const rows = Math.ceil(heightMeters / cell);
@@ -26,6 +29,8 @@ export function generateTerrain(config: GameConfig, seed: number): TerrainGrid {
   const random = createSeededRandom(seed);
   const phase = random() * Math.PI * 2;
   const secondPhase = random() * Math.PI * 2;
+  // Separate stream keeps the old surface and cannon spawn identical.
+  const rockPhase = createSeededRandom(seed ^ 0x7f4a7c15)() * Math.PI * 2;
   let noise = 0;
   for (let column = 0; column < columns; column++) {
     const u = column / columns;
@@ -36,7 +41,16 @@ export function generateTerrain(config: GameConfig, seed: number): TerrainGrid {
         (Math.sin(u * Math.PI * 3 + phase) + 0.45 * Math.sin(u * Math.PI * 7 + secondPhase)) +
       noise * noiseAmplitudeMeters;
     const firstRow = clamp(Math.floor(surface / cell), 1, rows - 1);
-    for (let row = firstRow; row < rows; row++) cells[row * columns + column] = 1;
+    const rockDepth =
+      rockDepthMeters === null
+        ? Infinity
+        : Math.max(
+            cell,
+            rockDepthMeters + Math.sin(u * Math.PI * 5 + rockPhase) * rockVariationMeters,
+          );
+    for (let row = firstRow; row < rows; row++)
+      cells[row * columns + column] =
+        (row - firstRow) * cell >= rockDepth ? TerrainMaterialId.Rock : TerrainMaterialId.Soil;
   }
   return new TerrainGrid(columns, rows, cell, cells);
 }

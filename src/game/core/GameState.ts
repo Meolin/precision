@@ -6,15 +6,24 @@ import type { ImpactEvent } from '../impacts/ImpactEvent';
 import type { TerrainDamageEvent } from '../terrain/TerrainDamageEvent';
 import { generateTerrain } from '../terrain/generateTerrain';
 import type { TerrainGrid } from '../terrain/TerrainGrid';
+import type { TerrainMaterialId } from '../terrain/TerrainMaterialId';
+import type { ImpactResolution } from '../impacts/ImpactResolution';
 
 /** Persistent telemetry, separate from the transient event queue. */
 export interface LastImpact extends ImpactEvent {
   craterRadiusMeters: number;
   removedCells: number;
+  materialId: TerrainMaterialId;
+  penetrationStatus: 'penetrating' | 'success' | 'stopped' | 'disabled';
+  penetrationDistanceMeters: number;
+  energyLostJ: number;
+  remainingEnergyJ: number;
+  exitSpeed: number;
 }
 export type SimulationEvent =
   | ImpactEvent
   | TerrainDamageEvent
+  | { type: 'impactResolved'; tick: number; projectileId: EntityId; resolution: ImpactResolution }
   | { type: 'projectileSpawned'; tick: number; projectile: ProjectileState };
 export interface GameState {
   tick: number;

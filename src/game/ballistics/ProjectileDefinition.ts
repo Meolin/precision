@@ -1,6 +1,7 @@
 import type { ImpactDefinitionId } from '../impacts/ImpactDefinition';
+import type { ProjectilePenetrationDefinition } from '../impacts/ProjectilePenetrationDefinition';
 
-export type ProjectileDefinitionId = 'basicShell' | 'mortarShell';
+export type ProjectileDefinitionId = 'basicShell' | 'mortarShell' | 'penetratorShell';
 
 export interface ProjectileDefinition {
   readonly id: ProjectileDefinitionId;
@@ -13,4 +14,5 @@ export interface ProjectileDefinition {
   readonly dragCoefficient: number;
   readonly maxLifetimeSeconds: number;
   readonly impactDefinitionId: ImpactDefinitionId;
+  readonly penetration?: ProjectilePenetrationDefinition;
 }

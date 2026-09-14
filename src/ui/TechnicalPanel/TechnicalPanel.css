@@ -182,3 +182,22 @@
 .text-button:hover {
   color: var(--accent);
 }
+.inspector-values {
+  margin: 0;
+  font-size: 0.72rem;
+}
+.inspector-values > div {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.6rem;
+  padding: 0.4rem 0;
+}
+.inspector-values dt {
+  color: var(--muted);
+}
+.inspector-values dd {
+  margin: 0;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}

@@ -20,6 +20,16 @@ export const impactDefinitions: Readonly<Record<ImpactDefinitionId, ImpactDefini
         maxRadiusMeters: 4.5,
       }),
     }),
+    penetratorImpact: Object.freeze({
+      id: 'penetratorImpact',
+      terrainDamage: Object.freeze({
+        enabled: true,
+        baseRadiusMeters: 0.35,
+        energyScale: 0.001,
+        maxRadiusMeters: 0.8,
+      }),
+      penetrationDamage: Object.freeze({ channelRadiusScale: 1 }),
+    }),
   });
 
 export function resolveImpactDefinition(

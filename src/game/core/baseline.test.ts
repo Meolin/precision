@@ -13,6 +13,8 @@ describe('ballistic MVP baseline', () => {
     { name: 'high angle', angle: 80, wind: 0, drag: 0.15 },
   ])('$name', ({ angle, wind, drag }) => {
     const config = cloneConfig();
+    // The unchanged Step 1/2 snapshots describe the all-Soil fixture.
+    config.terrain.rockDepthMeters = null;
     config.physics.windAcceleration = wind;
     config.physics.airDrag = drag;
     const runtime = new GameRuntime(config);

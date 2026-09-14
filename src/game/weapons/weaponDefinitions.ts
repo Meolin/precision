@@ -18,6 +18,14 @@ export const weaponDefinitions: Readonly<Record<WeaponId, WeaponDefinition>> = O
     cooldownSeconds: 0.8,
     defaultAngleDeg: 70,
   }),
+  heavyPenetrator: Object.freeze({
+    id: 'heavyPenetrator',
+    name: 'Heavy Penetrator',
+    projectileDefinitionId: 'penetratorShell',
+    muzzleVelocity: 50,
+    cooldownSeconds: 1,
+    defaultAngleDeg: 8,
+  }),
 });
 
 export function isWeaponId(value: string): value is WeaponId {

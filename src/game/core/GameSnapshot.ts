@@ -13,6 +13,17 @@ export function createGameSnapshot(state: Readonly<GameState>) {
       position: { ...p.position },
       previousPosition: { ...p.previousPosition },
       velocity: { ...p.velocity },
+      ...(p.penetration ? { penetration: { ...p.penetration } } : {}),
+      ...(p.penetrationState
+        ? {
+            penetrationState: {
+              ...p.penetrationState,
+              position: { ...p.penetrationState.position },
+              direction: { ...p.penetrationState.direction },
+              materialSamples: [...p.penetrationState.materialSamples],
+            },
+          }
+        : {}),
     })),
     terrain: {
       columns: state.terrain.columns,

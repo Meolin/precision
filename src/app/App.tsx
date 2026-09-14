@@ -26,6 +26,10 @@ export function App({ runtime }: { runtime: GameRuntime }) {
   const updateDebug = (key: keyof DebugOptions, value: boolean) => {
     setDebug((current) => ({ ...current, [key]: value }));
     if (key === 'samples') runtime.recordCollisionSamples = value;
+    if (key === 'penetration') {
+      runtime.recordPenetrationPaths = value;
+      if (!value) runtime.penetrationPath = null;
+    }
   };
 
   return (
@@ -41,7 +45,7 @@ export function App({ runtime }: { runtime: GameRuntime }) {
             BALLISTICS<span className="brand-divider">/</span>
             <b>LAB</b>
           </span>
-          <span className="version-badge">STEP 2</span>
+          <span className="version-badge">STEP 3</span>
         </div>
         <span className="header-note">
           <span className="status-dot" />
@@ -102,6 +106,14 @@ export function App({ runtime }: { runtime: GameRuntime }) {
                   <i className="legend-impact" />
                   Попадание
                 </span>
+                <span>
+                  <i className="legend-soil" />
+                  Soil
+                </span>
+                <span>
+                  <i className="legend-rock" />
+                  Rock
+                </span>
               </div>
               <span>
                 {config.world.widthMeters} × {config.world.heightMeters} m
@@ -125,7 +137,8 @@ export function App({ runtime }: { runtime: GameRuntime }) {
             </span>
             <span>
               <kbd>1</kbd>
-              <kbd>2</kbd> оружие
+              <kbd>2</kbd>
+              <kbd>3</kbd> оружие
             </span>
             <span>
               <kbd>P</kbd> пауза

@@ -1,6 +1,7 @@
 import { clamp, type Vec2 } from '../math/Vec2';
+import { TerrainMaterialId } from './TerrainMaterialId';
 
-/** Binary occupancy in meters; +x right, +y down. Cell indices are integers. */
+/** Material bytes in meters; +x right, +y down. No material physics lives here. */
 export class TerrainGrid {
   readonly cells: Uint8Array;
   version = 0;
@@ -24,17 +25,33 @@ export class TerrainGrid {
     this.cells = cells ? cells.slice() : new Uint8Array(columns * rows);
   }
 
+  getMaterialAtCell(column: number, row: number): TerrainMaterialId {
+    if (
+      !Number.isInteger(column) ||
+      !Number.isInteger(row) ||
+      column < 0 ||
+      row < 0 ||
+      column >= this.columns ||
+      row >= this.rows
+    )
+      return TerrainMaterialId.Air;
+    return this.cells[row * this.columns + column] as TerrainMaterialId;
+  }
+
+  getMaterialAtWorldPosition(position: Vec2): TerrainMaterialId {
+    const cell = this.worldToCell(position);
+    return this.getMaterialAtCell(cell.x, cell.y);
+  }
+
   isSolid(column: number, row: number): boolean {
-    return (
-      column >= 0 &&
-      row >= 0 &&
-      column < this.columns &&
-      row < this.rows &&
-      this.cells[row * this.columns + column] === 1
-    );
+    return this.getMaterialAtCell(column, row) !== TerrainMaterialId.Air;
   }
 
   setSolid(column: number, row: number, solid: boolean): void {
+    this.setMaterial(column, row, solid ? TerrainMaterialId.Soil : TerrainMaterialId.Air);
+  }
+
+  setMaterial(column: number, row: number, material: TerrainMaterialId): void {
     if (
       !Number.isInteger(column) ||
       !Number.isInteger(row) ||
@@ -45,7 +62,7 @@ export class TerrainGrid {
     )
       return;
     const index = row * this.columns + column;
-    const value = solid ? 1 : 0;
+    const value = material;
     if (this.cells[index] !== value) {
       this.cells[index] = value;
       this.version++;
@@ -89,8 +106,37 @@ export class TerrainGrid {
         )
           continue;
         const index = row * this.columns + column;
-        if (this.cells[index] === 1) {
-          this.cells[index] = 0;
+        if (this.cells[index] !== TerrainMaterialId.Air) {
+          this.cells[index] = TerrainMaterialId.Air;
+          removed++;
+        }
+      }
+    if (removed > 0) this.version++;
+    return removed;
+  }
+
+  /** Rasterize a continuous capsule via cell-center distance to its segment. */
+  removeCapsule(from: Vec2, to: Vec2, radius: number): number {
+    if (![from.x, from.y, to.x, to.y, radius].every(Number.isFinite) || radius <= 0) return 0;
+    const dx = to.x - from.x;
+    const dy = to.y - from.y;
+    const lengthSquared = dx * dx + dy * dy;
+    if (lengthSquared === 0) return this.removeCircle(from, radius);
+    const size = this.cellSizeMeters;
+    const left = clamp(Math.floor((Math.min(from.x, to.x) - radius) / size), 0, this.columns - 1);
+    const right = clamp(Math.floor((Math.max(from.x, to.x) + radius) / size), 0, this.columns - 1);
+    const top = clamp(Math.floor((Math.min(from.y, to.y) - radius) / size), 0, this.rows - 1);
+    const bottom = clamp(Math.floor((Math.max(from.y, to.y) + radius) / size), 0, this.rows - 1);
+    let removed = 0;
+    for (let row = top; row <= bottom; row++)
+      for (let col = left; col <= right; col++) {
+        const px = (col + 0.5) * size - from.x;
+        const py = (row + 0.5) * size - from.y;
+        const t = clamp((px * dx + py * dy) / lengthSquared, 0, 1);
+        if ((px - dx * t) ** 2 + (py - dy * t) ** 2 > radius * radius) continue;
+        const index = row * this.columns + col;
+        if (this.cells[index] !== TerrainMaterialId.Air) {
+          this.cells[index] = TerrainMaterialId.Air;
           removed++;
         }
       }

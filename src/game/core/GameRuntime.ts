@@ -7,6 +7,8 @@ import type { Vec2 } from '../math/Vec2';
 import { createGameState, type GameState } from './GameState';
 import { SimulationClock } from './SimulationClock';
 import { stepSimulation } from './stepSimulation';
+import type { PenetrationResult } from '../impacts/PenetrationResult';
+import type { PenetrationSegment } from '../impacts/PenetrationResult';
 
 export class GameRuntime {
   private state: GameState;
@@ -18,6 +20,9 @@ export class GameRuntime {
   private configRevision = 0;
   readonly collisionSamples: Vec2[] = [];
   recordCollisionSamples = false;
+  recordPenetrationPaths = false;
+  penetrationPath: PenetrationResult | null = null;
+  private cursorPosition: Vec2 | null = null;
 
   constructor(config: GameConfig = defaultGameConfig, seed = 12345) {
     this.config = validateConfig(config);
@@ -26,6 +31,13 @@ export class GameRuntime {
 
   getState(): Readonly<GameState> {
     return this.state;
+  }
+  /** Presentation-only cursor state; it never participates in simulation or snapshots. */
+  setCursorPosition(position: Vec2 | null): void {
+    this.cursorPosition = position ? { ...position } : null;
+  }
+  getCursorPosition(): Vec2 | null {
+    return this.cursorPosition ? { ...this.cursorPosition } : null;
   }
   getConfig(): GameConfig {
     return this.config;
@@ -64,6 +76,40 @@ export class GameRuntime {
       this.commands,
       this.recordCollisionSamples ? this.collisionSamples : undefined,
     );
+    if (!this.recordPenetrationPaths) this.penetrationPath = null;
+    else {
+      for (const event of this.state.events)
+        if (event.type === 'impactResolved')
+          this.penetrationPath = event.resolution.penetration ?? null;
+      for (const event of this.state.events) {
+        if (
+          event.type !== 'terrainDamage' ||
+          event.operation.type !== 'capsule' ||
+          !this.penetrationPath
+        )
+          continue;
+        const segment: PenetrationSegment = {
+          materialId: this.state.lastImpact?.materialId ?? 0,
+          from: { ...event.operation.from },
+          to: { ...event.operation.to },
+          distanceMeters: Math.hypot(
+            event.operation.to.x - event.operation.from.x,
+            event.operation.to.y - event.operation.from.y,
+          ),
+          energyLostJ: event.energyJ,
+        };
+        this.penetrationPath = {
+          ...this.penetrationPath,
+          finalPosition: { ...event.operation.to },
+          remainingEnergyJ:
+            this.state.lastImpact?.remainingEnergyJ ?? this.penetrationPath.remainingEnergyJ,
+          penetrationDistanceMeters:
+            this.state.lastImpact?.penetrationDistanceMeters ??
+            this.penetrationPath.penetrationDistanceMeters,
+          traversedSegments: [...this.penetrationPath.traversedSegments, segment],
+        };
+      }
+    }
     this.commands = [];
   };
 
@@ -89,6 +135,8 @@ export class GameRuntime {
     this.state = createGameState(this.config, seed);
     this.commands = [];
     this.collisionSamples.length = 0;
+    this.penetrationPath = null;
+    this.cursorPosition = null;
     this.clock.reset();
     this.preview = null;
   }
@@ -102,7 +150,9 @@ export class GameRuntime {
     const resize =
       validated.world.widthMeters !== this.config.world.widthMeters ||
       validated.world.heightMeters !== this.config.world.heightMeters ||
-      validated.terrain.cellSizeMeters !== this.config.terrain.cellSizeMeters;
+      validated.terrain.cellSizeMeters !== this.config.terrain.cellSizeMeters ||
+      validated.terrain.rockDepthMeters !== this.config.terrain.rockDepthMeters ||
+      validated.terrain.rockVariationMeters !== this.config.terrain.rockVariationMeters;
     if (validated.simulation.tickRate !== this.config.simulation.tickRate) this.clock.reset();
     this.config = validated;
     this.configRevision++;

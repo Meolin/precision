@@ -11,6 +11,9 @@ export interface GameConfig {
     surfaceHeightFraction: number;
     waveAmplitudeMeters: number;
     noiseAmplitudeMeters: number;
+    /** null generates the legacy, all-Soil terrain. */
+    rockDepthMeters: number | null;
+    rockVariationMeters: number;
   };
   cannon: {
     minAngleDeg: number;

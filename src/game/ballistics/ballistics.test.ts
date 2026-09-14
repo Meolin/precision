@@ -116,8 +116,10 @@ describe('trajectory preview', () => {
       let tick = 0;
       tick < config.preview.maxSeconds * config.simulation.tickRate && shell.alive;
       tick++
-    )
+    ) {
       contact = advanceProjectile(shell, state.terrain, config, 1 / config.simulation.tickRate);
+      if (contact) break;
+    }
     expect(preview.impact).not.toBeNull();
     expect(preview.impact).toEqual(contact?.position);
     expect(state.terrain.cells).toEqual(before);

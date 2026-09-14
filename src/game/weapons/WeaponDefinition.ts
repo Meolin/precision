@@ -1,6 +1,6 @@
 import type { ProjectileDefinitionId } from '../ballistics/ProjectileDefinition';
 
-export type WeaponId = 'basicCannon' | 'mortar';
+export type WeaponId = 'basicCannon' | 'mortar' | 'heavyPenetrator';
 
 /** Launch parameters only. Defaults are data; debug overrides live in GameConfig. */
 export interface WeaponDefinition {

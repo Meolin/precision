@@ -4,6 +4,7 @@ export interface DebugOptions {
   impact: boolean;
   grid: boolean;
   samples: boolean;
+  penetration: boolean;
 }
 export const defaultDebugOptions: DebugOptions = {
   trajectory: true,
@@ -11,4 +12,5 @@ export const defaultDebugOptions: DebugOptions = {
   impact: true,
   grid: false,
   samples: false,
+  penetration: false,
 };

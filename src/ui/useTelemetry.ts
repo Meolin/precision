@@ -5,13 +5,19 @@ import { toDegrees } from '../game/math/Vec2';
 import { resolveWeapon } from '../game/weapons/WeaponSettings';
 import { weaponDefinitions } from '../game/weapons/weaponDefinitions';
 import { projectileDefinitions } from '../game/ballistics/projectileDefinitions';
+import { terrainMaterialDefinitions } from '../game/terrain/TerrainMaterialDefinition';
+import { penetrationChannelRadius } from '../game/impacts/resolveImpact';
 
 function readTelemetry(runtime: GameRuntime) {
   const state = runtime.getState();
   const config = runtime.getConfig();
   const cannon = runtime.getRequestedCannon();
-  const { weapon, projectile: definition } = resolveWeapon(config, cannon.weaponId);
+  const { weapon, projectile: definition, impact } = resolveWeapon(config, cannon.weaponId);
   const projectile = state.projectiles.at(-1);
+  const cursor = runtime.getCursorPosition();
+  const cursorMaterial = cursor
+    ? terrainMaterialDefinitions[state.terrain.getMaterialAtWorldPosition(cursor)]
+    : null;
   return {
     tick: state.tick,
     seconds: state.elapsedSeconds,
@@ -31,6 +37,25 @@ function readTelemetry(runtime: GameRuntime) {
     impactSpeed: state.lastImpact?.speed ?? null,
     impactX: state.lastImpact?.position.x ?? null,
     impactY: state.lastImpact?.position.y ?? null,
+    impactMaterial: state.lastImpact
+      ? terrainMaterialDefinitions[state.lastImpact.materialId].name
+      : null,
+    penetrationStatus: state.lastImpact?.penetrationStatus ?? null,
+    penetrationDepth: state.lastImpact?.penetrationDistanceMeters ?? null,
+    energyLost: state.lastImpact?.energyLostJ ?? null,
+    remainingEnergy: state.lastImpact?.remainingEnergyJ ?? null,
+    exitSpeed: state.lastImpact?.exitSpeed ?? null,
+    penetration: definition.penetration ?? null,
+    channelRadius: definition.penetration
+      ? penetrationChannelRadius(
+          definition.radiusMeters,
+          state.terrain.cellSizeMeters,
+          definition.penetration,
+          impact,
+        )
+      : null,
+    cursor,
+    cursorMaterial,
     weaponId: weapon.id,
     weaponName: weapon.name,
     projectileName: definition.name,

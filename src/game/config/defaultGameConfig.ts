@@ -12,6 +12,8 @@ export const defaultGameConfig: GameConfig = {
     surfaceHeightFraction: 0.7,
     waveAmplitudeMeters: 4.2,
     noiseAmplitudeMeters: 1,
+    rockDepthMeters: 6,
+    rockVariationMeters: 1.5,
   },
   cannon: {
     minAngleDeg: 5,
@@ -89,5 +91,12 @@ export function validateConfig(input: GameConfig): GameConfig {
   )
     throw new Error('Terrain exceeds the MVP grid budget.');
   if (config.preview.maxPoints < 2) throw new Error('Preview requires at least two points.');
+  if (
+    (config.terrain.rockDepthMeters !== null &&
+      (!Number.isFinite(config.terrain.rockDepthMeters) || config.terrain.rockDepthMeters < 0)) ||
+    !Number.isFinite(config.terrain.rockVariationMeters) ||
+    config.terrain.rockVariationMeters < 0
+  )
+    throw new Error('Rock depth and variation must be finite and non-negative.');
   return config;
 }

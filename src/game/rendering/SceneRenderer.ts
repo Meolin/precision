@@ -156,6 +156,22 @@ export class SceneRenderer {
     if (options.samples)
       for (const point of runtime.collisionSamples)
         this.debug.circle(point.x, point.y, 1.3 * pixel).fill({ color: 0xed85ac, alpha: 0.75 });
+    if (options.penetration && runtime.penetrationPath) {
+      const path = runtime.penetrationPath;
+      for (const segment of path.traversedSegments) {
+        this.debug
+          .moveTo(segment.from.x, segment.from.y)
+          .lineTo(segment.to.x, segment.to.y)
+          .stroke({ color: 0x85d7e8, width: 1.5 * pixel, alpha: 0.8 });
+        this.debug.circle(segment.to.x, segment.to.y, pixel).fill(0x85d7e8);
+      }
+      this.debug
+        .circle(path.entryPosition.x, path.entryPosition.y, 4 * pixel)
+        .stroke({ color: colors.orange, width: 1.5 * pixel });
+      this.debug
+        .circle(path.finalPosition.x, path.finalPosition.y, 4 * pixel)
+        .stroke({ color: path.penetrated ? colors.accent : 0xed85ac, width: 1.5 * pixel });
+    }
   }
 
   private drawBackground(width: number, height: number, pixel: number, gridStep: number): void {

@@ -26,7 +26,11 @@ export function simulateTrajectoryPreview(
   let impact: Vec2 | null = null;
   for (let tick = 1; tick <= maxTicks && projectile.alive; tick++) {
     const hit = advanceProjectile(projectile, terrain, config, dt);
-    if (hit) impact = hit.position;
+    if (hit) {
+      impact = hit.position;
+      // Step 3 preview deliberately ends at the first contact, before any penetration.
+      projectile.alive = false;
+    }
     if (tick % stride === 0 || !projectile.alive || tick === maxTicks)
       points.push({ ...projectile.position });
   }

@@ -68,6 +68,20 @@ export function FlightTelemetry({ runtime }: { runtime: GameRuntime }) {
           <span className="impact-dot" />
         </div>
         <p>{data.impactWeapon ? `${data.impactWeapon} / ${data.impactProjectile}` : '—'}</p>
+        <p>
+          Материал: <b>{data.impactMaterial ?? '—'}</b> · Пробитие:{' '}
+          <b>
+            {data.penetrationStatus === 'success'
+              ? 'SUCCESS'
+              : data.penetrationStatus === 'penetrating'
+                ? 'В ПРОЦЕССЕ'
+                : data.penetrationStatus === 'stopped'
+                  ? 'STOPPED'
+                  : data.penetrationStatus === 'disabled'
+                    ? 'ВЫКЛЮЧЕНО'
+                    : '—'}
+          </b>
+        </p>
         <div className="telemetry-values">
           <div>
             <span>Энергия удара</span>
@@ -86,6 +100,32 @@ export function FlightTelemetry({ runtime }: { runtime: GameRuntime }) {
           Скорость: {formatNumber(data.impactSpeed, 2)} m/s · x: {formatNumber(data.impactX, 2)} m ·
           y: {formatNumber(data.impactY, 2)} m
         </p>
+        <div className="telemetry-values penetration-telemetry">
+          <div>
+            <span>Глубина пробития</span>
+            <strong>
+              {formatNumber(data.penetrationDepth, 2)} <small>m</small>
+            </strong>
+          </div>
+          <div>
+            <span>Потеря энергии</span>
+            <strong>
+              {formatNumber(data.energyLost)} <small>J</small>
+            </strong>
+          </div>
+          <div>
+            <span>Остаток энергии</span>
+            <strong>
+              {formatNumber(data.remainingEnergy)} <small>J</small>
+            </strong>
+          </div>
+          <div>
+            <span>Скорость выхода</span>
+            <strong>
+              {formatNumber(data.exitSpeed, 2)} <small>m/s</small>
+            </strong>
+          </div>
+        </div>
         <p>
           {data.removed === null
             ? 'Сделайте первый выстрел по рельефу'

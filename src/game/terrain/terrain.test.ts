@@ -13,7 +13,7 @@ describe('terrain occupancy and damage', () => {
     const removed = applyTerrainDamage(grid, {
       type: 'circle',
       center: { x: 10, y: 10 },
-      radius: 3,
+      radiusMeters: 3,
     });
     expect(removed).toBeGreaterThan(0);
     for (let y = 0; y < 20; y++)

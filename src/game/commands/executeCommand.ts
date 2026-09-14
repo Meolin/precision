@@ -55,6 +55,17 @@ export function executeCommand(state: GameState, config: GameConfig, command: Ga
         position: { ...projectile.position },
         previousPosition: { ...projectile.previousPosition },
         velocity: { ...projectile.velocity },
+        ...(projectile.penetration ? { penetration: { ...projectile.penetration } } : {}),
+        ...(projectile.penetrationState
+          ? {
+              penetrationState: {
+                ...projectile.penetrationState,
+                position: { ...projectile.penetrationState.position },
+                direction: { ...projectile.penetrationState.direction },
+                materialSamples: [...projectile.penetrationState.materialSamples],
+              },
+            }
+          : {}),
       },
     });
   }

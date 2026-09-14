@@ -24,7 +24,7 @@ export function stepProjectile(
   projectile.lifetimeSeconds += dt;
 }
 
-/** Shared by the live simulation and preview, including all stop conditions. */
+/** Shared flight and contact query. The impact resolver owns collision response. */
 export function advanceProjectile(
   projectile: ProjectileState,
   terrain: TerrainGrid,
@@ -42,7 +42,6 @@ export function advanceProjectile(
   );
   if (hit) {
     projectile.position = hit.position;
-    projectile.alive = false;
     return hit;
   }
   const { x, y } = projectile.position;
