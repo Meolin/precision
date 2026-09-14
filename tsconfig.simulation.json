@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "lib": ["ES2022"], "types": [] },
+  "include": [
+    "src/game/config",
+    "src/game/core",
+    "src/game/math",
+    "src/game/commands",
+    "src/game/entities",
+    "src/game/terrain",
+    "src/game/ballistics"
+  ],
+  "exclude": ["**/*.test.ts"]
+}
