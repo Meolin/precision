@@ -89,8 +89,9 @@ export class SceneRenderer {
       }
     }
 
-    const { position, surfaceY } = state.cannon;
-    const muzzle = muzzlePosition(state.cannon, config);
+    const requestedCannon = runtime.getRequestedCannon();
+    const { position, surfaceY } = requestedCannon;
+    const muzzle = muzzlePosition(requestedCannon, config);
     this.cannon.clear();
     this.cannon
       .roundRect(position.x - 1.6, surfaceY - 0.65, 3.2, 0.7, 0.2)
@@ -146,9 +147,9 @@ export class SceneRenderer {
       }
     }
     if (options.impact && state.lastImpact) {
-      const { position: impact, damage } = state.lastImpact;
+      const { position: impact, craterRadiusMeters } = state.lastImpact;
       this.debug
-        .circle(impact.x, impact.y, damage.radius)
+        .circle(impact.x, impact.y, craterRadiusMeters)
         .stroke({ color: colors.orange, width: pixel, alpha: 0.65 });
       this.debug.circle(impact.x, impact.y, 2 * pixel).fill(colors.orange);
     }

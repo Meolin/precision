@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { cloneConfig } from '../config/defaultGameConfig';
-import { applyTerrainDamage, craterRadius } from './damageTerrain';
+import { applyTerrainDamage } from './damageTerrain';
+import { craterRadius } from '../impacts/resolveImpact';
+import { impactDefinitions } from '../impacts/impactDefinitions';
 import { generateTerrain } from './generateTerrain';
 import { circleTouchesTerrain, sweepTerrain } from './terrainCollision';
 import { TerrainGrid } from './TerrainGrid';
@@ -50,7 +52,7 @@ describe('terrain occupancy and damage', () => {
   });
 
   it('increases crater size with energy and respects the cap', () => {
-    const { terrain } = cloneConfig();
+    const terrain = impactDefinitions.basicImpact.terrainDamage;
     expect(craterRadius(0, terrain)).toBe(0.8);
     expect(craterRadius(4000, terrain)).toBeGreaterThan(craterRadius(1000, terrain));
     expect(craterRadius(1e12, terrain)).toBe(3);

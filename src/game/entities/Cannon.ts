@@ -1,12 +1,16 @@
 import type { GameConfig } from '../config/GameConfig';
 import { toRadians, type EntityId, type Vec2 } from '../math/Vec2';
 import type { TerrainGrid } from '../terrain/TerrainGrid';
+import type { WeaponId } from '../weapons/WeaponDefinition';
+import { weaponDefinitions } from '../weapons/weaponDefinitions';
 
 export interface CannonState {
   id: EntityId;
   position: Vec2;
   surfaceY: number;
   angleRad: number;
+  weaponId: WeaponId;
+  nextFireTimeSeconds: number;
 }
 
 export function spawnCannon(terrain: TerrainGrid, config: GameConfig): CannonState {
@@ -17,7 +21,9 @@ export function spawnCannon(terrain: TerrainGrid, config: GameConfig): CannonSta
     id: 1,
     position: { x, y: surfaceY - config.cannon.mountHeightMeters },
     surfaceY,
-    angleRad: toRadians(config.cannon.initialAngleDeg),
+    angleRad: toRadians(weaponDefinitions.basicCannon.defaultAngleDeg),
+    weaponId: 'basicCannon',
+    nextFireTimeSeconds: 0,
   };
 }
 

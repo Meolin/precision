@@ -1,5 +1,6 @@
 import { simulateTrajectoryPreview, type TrajectoryPreview } from '../ballistics/trajectoryPreview';
 import type { GameCommand } from '../commands/GameCommand';
+import { applyCannonCommand } from '../commands/executeCommand';
 import type { GameConfig } from '../config/GameConfig';
 import { defaultGameConfig, validateConfig } from '../config/defaultGameConfig';
 import type { Vec2 } from '../math/Vec2';
@@ -36,12 +37,12 @@ export class GameRuntime {
     return this.commands.length;
   }
   getRequestedAim(): number {
-    for (let index = this.commands.length - 1; index >= 0; index--) {
-      const command = this.commands[index];
-      if (command?.type === 'setAim' && command.cannonId === this.state.cannon.id)
-        return command.angleRad;
-    }
-    return this.state.cannon.angleRad;
+    return this.getRequestedCannon().angleRad;
+  }
+  getRequestedCannon() {
+    const cannon = { ...this.state.cannon, position: { ...this.state.cannon.position } };
+    for (const command of this.commands) applyCannonCommand(cannon, this.config, command);
+    return cannon;
   }
   get interpolationAlpha(): number {
     return this.paused ? 1 : this.clock.getAlpha(this.config.simulation.tickRate);
@@ -114,11 +115,12 @@ export class GameRuntime {
   }
 
   getTrajectoryPreview(): TrajectoryPreview {
-    const key = `${this.configRevision}:${this.state.terrain.version}:${this.state.cannon.angleRad}`;
+    const cannon = this.getRequestedCannon();
+    const key = `${this.configRevision}:${this.state.terrain.version}:${cannon.weaponId}:${cannon.angleRad}`;
     if (this.preview?.key !== key)
       this.preview = {
         key,
-        value: simulateTrajectoryPreview(this.state.cannon, this.state.terrain, this.config),
+        value: simulateTrajectoryPreview(cannon, this.state.terrain, this.config),
       };
     return this.preview.value;
   }

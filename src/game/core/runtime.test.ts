@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { cloneConfig } from '../config/defaultGameConfig';
 import { toRadians } from '../math/Vec2';
+import { resolveWeapon } from '../weapons/WeaponSettings';
 import { GameRuntime } from './GameRuntime';
 import { createGameSnapshot } from './GameSnapshot';
 import { SimulationClock } from './SimulationClock';
@@ -99,9 +100,9 @@ describe('game runtime', () => {
     const state = runtime.getState();
     expect(state.lastImpact).not.toBeNull();
     expect(state.lastImpact?.position).toEqual(preview.impact);
-    expect(state.lastImpact?.energyJoules).toBeGreaterThan(0);
+    expect(state.lastImpact?.kineticEnergyJ).toBeGreaterThan(0);
     expect(state.lastImpact?.removedCells).toBeGreaterThan(0);
-    expect(state.lastImpact?.damage.type).toBe('circle');
+    expect(state.events.some((event) => event.type === 'terrainDamage')).toBe(true);
     expect(state.terrain.version).toBeGreaterThan(0);
     expect(state.projectiles).toHaveLength(0);
     expect(runtime.getTrajectoryPreview()).not.toBe(preview);
@@ -135,13 +136,14 @@ describe('game runtime', () => {
     expect(runtime.getTrajectoryPreview()).toBe(original);
     const config = cloneConfig(runtime.getConfig());
     config.physics.gravity = Number.NaN;
-    config.projectile.massKg = -2;
-    config.terrain.baseCraterRadiusMeters = 3;
-    config.terrain.maxCraterRadiusMeters = 1;
+    config.weaponOverrides.basicCannon = { projectile: { massKg: -2 } };
+    config.weaponOverrides.basicCannon.impact = { baseRadiusMeters: 3, maxRadiusMeters: 1 };
     runtime.updateConfig(config);
     expect(runtime.getConfig().physics.gravity).toBe(9.81);
-    expect(runtime.getConfig().projectile.massKg).toBe(0.1);
-    expect(runtime.getConfig().terrain.maxCraterRadiusMeters).toBe(3);
+    expect(resolveWeapon(runtime.getConfig(), 'basicCannon').projectile.massKg).toBe(0.1);
+    expect(
+      resolveWeapon(runtime.getConfig(), 'basicCannon').impact.terrainDamage.maxRadiusMeters,
+    ).toBe(3);
     expect(runtime.getTrajectoryPreview()).not.toBe(original);
     runtime.resetSettings();
     expect(runtime.getConfig()).toEqual(cloneConfig());
@@ -152,8 +154,10 @@ describe('game runtime', () => {
     runtime.enqueueCommand({ type: 'fire', cannonId: 1 });
     runtime.advance(1000 / 60);
     const config = cloneConfig(runtime.getConfig());
-    config.projectile.massKg = 10;
-    config.projectile.muzzleVelocity = 40;
+    config.weaponOverrides.basicCannon = {
+      projectile: { massKg: 10 },
+      weapon: { muzzleVelocity: 40 },
+    };
     runtime.updateConfig(config);
     runtime.enqueueCommand({ type: 'fire', cannonId: 1 });
     runtime.advance(1000 / 60);

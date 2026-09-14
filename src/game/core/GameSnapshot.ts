@@ -26,7 +26,10 @@ export function createGameSnapshot(state: Readonly<GameState>) {
       ? {
           ...state.lastImpact,
           position: { ...state.lastImpact.position },
-          damage: { ...state.lastImpact.damage, center: { ...state.lastImpact.damage.center } },
+          velocity: { ...state.lastImpact.velocity },
+          ...(state.lastImpact.surfaceNormal
+            ? { surfaceNormal: { ...state.lastImpact.surfaceNormal } }
+            : {}),
         }
       : null,
   };

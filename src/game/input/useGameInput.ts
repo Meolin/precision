@@ -49,6 +49,16 @@ export function useGameInput(
       const cannon = runtime.getState().cannon;
       const config = runtime.getConfig();
       switch (event.code) {
+        case 'Digit1':
+        case 'Digit2':
+          event.preventDefault();
+          if (!event.repeat)
+            runtime.enqueueCommand({
+              type: 'setWeapon',
+              cannonId: cannon.id,
+              weaponId: event.code === 'Digit1' ? 'basicCannon' : 'mortar',
+            });
+          break;
         case 'KeyA':
         case 'ArrowLeft':
         case 'KeyD':

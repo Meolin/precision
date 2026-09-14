@@ -1,11 +1,16 @@
 import { useEffect, useState } from 'react';
-import { kineticEnergy } from '../game/ballistics/projectilePhysics';
+import { calculateKineticEnergy } from '../game/ballistics/projectilePhysics';
 import type { GameRuntime } from '../game/core/GameRuntime';
 import { toDegrees } from '../game/math/Vec2';
+import { resolveWeapon } from '../game/weapons/WeaponSettings';
+import { weaponDefinitions } from '../game/weapons/weaponDefinitions';
+import { projectileDefinitions } from '../game/ballistics/projectileDefinitions';
 
 function readTelemetry(runtime: GameRuntime) {
   const state = runtime.getState();
   const config = runtime.getConfig();
+  const cannon = runtime.getRequestedCannon();
+  const { weapon, projectile: definition } = resolveWeapon(config, cannon.weaponId);
   const projectile = state.projectiles.at(-1);
   return {
     tick: state.tick,
@@ -13,21 +18,33 @@ function readTelemetry(runtime: GameRuntime) {
     seed: state.seed,
     shots: state.shotsFired,
     active: state.projectiles.length,
-    angle: toDegrees(state.cannon.angleRad),
+    angle: toDegrees(cannon.angleRad),
     speed: projectile ? Math.hypot(projectile.velocity.x, projectile.velocity.y) : null,
-    energy: projectile ? kineticEnergy(projectile.massKg, projectile.velocity) : null,
-    impactEnergy: state.lastImpact?.energyJoules ?? null,
-    crater: state.lastImpact?.damage.radius ?? null,
+    energy: projectile ? calculateKineticEnergy(projectile.massKg, projectile.velocity) : null,
+    impactEnergy: state.lastImpact?.kineticEnergyJ ?? null,
+    crater: state.lastImpact?.craterRadiusMeters ?? null,
     removed: state.lastImpact?.removedCells ?? null,
-    velocity: config.projectile.muzzleVelocity,
-    mass: config.projectile.massKg,
-    muzzleEnergy: 0.5 * config.projectile.massKg * config.projectile.muzzleVelocity ** 2,
+    impactWeapon: state.lastImpact ? weaponDefinitions[state.lastImpact.weaponId].name : null,
+    impactProjectile: state.lastImpact
+      ? projectileDefinitions[state.lastImpact.projectileDefinitionId].name
+      : null,
+    impactSpeed: state.lastImpact?.speed ?? null,
+    impactX: state.lastImpact?.position.x ?? null,
+    impactY: state.lastImpact?.position.y ?? null,
+    weaponId: weapon.id,
+    weaponName: weapon.name,
+    projectileName: definition.name,
+    weaponPending: weapon.id !== state.cannon.weaponId,
+    cooldownRemaining: Math.max(0, state.cannon.nextFireTimeSeconds - state.elapsedSeconds),
+    velocity: weapon.muzzleVelocity,
+    mass: definition.massKg,
+    muzzleEnergy: calculateKineticEnergy(definition.massKg, { x: weapon.muzzleVelocity, y: 0 }),
     terrainVersion: state.terrain.version,
     queued: runtime.pendingCommands,
   };
 }
 
-/** Sample a small HUD at 10 Hz. World coordinates never enter React state. */
+/** Sample compact HUD data at 10 Hz, including the last impact's debug coordinates. */
 export function useTelemetry(runtime: GameRuntime) {
   const [telemetry, setTelemetry] = useState(() => readTelemetry(runtime));
   useEffect(() => {

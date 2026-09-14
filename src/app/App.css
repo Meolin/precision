@@ -179,6 +179,20 @@ h1 {
   border-top: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
 }
+.weapon-status {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 12px;
+  color: var(--muted);
+  font: 10px var(--mono);
+  line-height: 1.6;
+}
+.weapon-status b {
+  color: var(--accent);
+  font-weight: 500;
+}
 .hud-item {
   padding: 0 20px;
   border-left: 1px solid var(--border);

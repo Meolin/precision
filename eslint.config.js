@@ -17,7 +17,9 @@ export default tseslint.config(
     },
   },
   {
-    files: ['src/game/{config,core,math,commands,entities,terrain,ballistics}/**/*.ts'],
+    files: [
+      'src/game/{config,core,math,commands,entities,terrain,ballistics,weapons,impacts}/**/*.ts',
+    ],
     rules: {
       'no-restricted-imports': [
         'error',

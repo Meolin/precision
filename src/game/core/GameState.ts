@@ -1,22 +1,21 @@
 import type { ProjectileState } from '../ballistics/Projectile';
 import type { GameConfig } from '../config/GameConfig';
 import { spawnCannon, type CannonState } from '../entities/Cannon';
-import type { EntityId, Vec2 } from '../math/Vec2';
-import type { TerrainDamageOperation } from '../terrain/damageTerrain';
+import type { EntityId } from '../math/Vec2';
+import type { ImpactEvent } from '../impacts/ImpactEvent';
+import type { TerrainDamageEvent } from '../terrain/TerrainDamageEvent';
 import { generateTerrain } from '../terrain/generateTerrain';
 import type { TerrainGrid } from '../terrain/TerrainGrid';
 
-export interface ImpactEvent {
-  type: 'impact';
-  tick: number;
-  projectileId: EntityId;
-  position: Vec2;
-  energyJoules: number;
-  damage: TerrainDamageOperation;
+/** Persistent telemetry, separate from the transient event queue. */
+export interface LastImpact extends ImpactEvent {
+  craterRadiusMeters: number;
   removedCells: number;
 }
 export type SimulationEvent =
-  ImpactEvent | { type: 'projectileSpawned'; tick: number; projectile: ProjectileState };
+  | ImpactEvent
+  | TerrainDamageEvent
+  | { type: 'projectileSpawned'; tick: number; projectile: ProjectileState };
 export interface GameState {
   tick: number;
   elapsedSeconds: number;
@@ -25,7 +24,7 @@ export interface GameState {
   cannon: CannonState;
   projectiles: ProjectileState[];
   terrain: TerrainGrid;
-  lastImpact: ImpactEvent | null;
+  lastImpact: LastImpact | null;
   events: SimulationEvent[];
   shotsFired: number;
 }

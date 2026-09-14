@@ -7,14 +7,24 @@ import {
   type NumericSetting,
 } from '../../game/config/GameConfig';
 import type { DebugOptions } from '../../game/rendering/DebugOptions';
-import { formatNumber } from '../useTelemetry';
+import type { GameRuntime } from '../../game/core/GameRuntime';
+import type { WeaponId } from '../../game/weapons/WeaponDefinition';
+import { isWeaponId, weaponDefinitions } from '../../game/weapons/weaponDefinitions';
+import {
+  weaponNumericSettings,
+  weaponSettingValue,
+  type WeaponNumericSetting,
+} from '../../game/weapons/WeaponSettings';
+import { formatNumber, useTelemetry } from '../useTelemetry';
 import './TechnicalPanel.css';
 
 interface Props {
+  runtime: GameRuntime;
   config: GameConfig;
   debug: DebugOptions;
   paused: boolean;
   onSetting: (setting: NumericSetting, value: number) => void;
+  onWeaponSetting: (id: WeaponId, setting: WeaponNumericSetting, value: number) => void;
   onDebug: (key: keyof DebugOptions, value: boolean) => void;
   onPause: () => void;
   onStep: () => void;
@@ -27,7 +37,7 @@ function NumericControl({
   value,
   onChange,
 }: {
-  setting: NumericSetting;
+  setting: NumericSetting | WeaponNumericSetting;
   value: number;
   onChange: (value: number) => void;
 }) {
@@ -81,8 +91,6 @@ function NumericControl({
 const groups: { section: EditableSection; title: string; number: string }[] = [
   { section: 'simulation', title: 'Симуляция', number: '01' },
   { section: 'physics', title: 'Физика мира', number: '02' },
-  { section: 'projectile', title: 'Снаряд', number: '03' },
-  { section: 'terrain', title: 'Разрушение рельефа', number: '04' },
 ];
 const debugLabels: { key: keyof DebugOptions; label: string }[] = [
   { key: 'trajectory', label: 'Прогноз траектории' },
@@ -93,16 +101,19 @@ const debugLabels: { key: keyof DebugOptions; label: string }[] = [
 ];
 
 export function TechnicalPanel({
+  runtime,
   config,
   debug,
   paused,
   onSetting,
+  onWeaponSetting,
   onDebug,
   onPause,
   onStep,
   onReset,
   onResetSettings,
 }: Props) {
+  const data = useTelemetry(runtime);
   return (
     <aside className="technical-panel" aria-labelledby="settings-title">
       <div className="panel-heading">
@@ -131,21 +142,74 @@ export function TechnicalPanel({
                   onChange={(value) => onSetting(setting, value)}
                 />
               ))}
-            {group.section === 'projectile' && (
-              <div className="energy-readout">
-                <span>
-                  Кинетическая энергия <small>½mv²</small>
-                </span>
-                <output>
-                  {formatNumber(
-                    0.5 * config.projectile.massKg * config.projectile.muzzleVelocity ** 2,
-                  )}{' '}
-                  <small>J</small>
-                </output>
-              </div>
-            )}
           </section>
         ))}
+        <section className="settings-group">
+          <h3>
+            <label htmlFor="weapon-selector">Оружие</label>
+            <span>1 / 2</span>
+          </h3>
+          <select
+            id="weapon-selector"
+            value={data.weaponId}
+            onChange={(event) => {
+              const weaponId = event.target.value;
+              if (isWeaponId(weaponId))
+                runtime.enqueueCommand({
+                  type: 'setWeapon',
+                  cannonId: runtime.getState().cannon.id,
+                  weaponId,
+                });
+            }}
+          >
+            {Object.values(weaponDefinitions).map((weapon) => (
+              <option key={weapon.id} value={weapon.id}>
+                {weapon.name}
+              </option>
+            ))}
+          </select>
+          {data.weaponPending && (
+            <p className="settings-note" role="status">
+              Смена оружия ожидает следующего тика.
+            </p>
+          )}
+          <p className="settings-note">{data.projectileName} · параметры следующего выстрела</p>
+          {weaponNumericSettings
+            .filter((setting) => setting.section !== 'impact')
+            .map((setting) => (
+              <NumericControl
+                key={`${data.weaponId}-${setting.section}-${setting.key}`}
+                setting={setting}
+                value={weaponSettingValue(config, data.weaponId, setting)}
+                onChange={(value) => onWeaponSetting(data.weaponId, setting, value)}
+              />
+            ))}
+          <div className="energy-readout">
+            <span>
+              Дульная энергия <small>½mv²</small>
+            </span>
+            <output>
+              {formatNumber(data.muzzleEnergy)} <small>J</small>
+            </output>
+          </div>
+        </section>
+        <section className="settings-group">
+          <h3>
+            <span>Разрушение рельефа</span>
+            <span>IMPACT</span>
+          </h3>
+          {weaponNumericSettings
+            .filter((setting) => setting.section === 'impact')
+            .map((setting) => (
+              <NumericControl
+                key={`${data.weaponId}-${setting.key}`}
+                setting={setting}
+                value={weaponSettingValue(config, data.weaponId, setting)}
+                onChange={(value) => onWeaponSetting(data.weaponId, setting, value)}
+              />
+            ))}
+          <p className="settings-note">Применяется при попадании снарядов этого оружия.</p>
+        </section>
         <section className="settings-group debug-group">
           <h3>
             <span>Визуализация</span>

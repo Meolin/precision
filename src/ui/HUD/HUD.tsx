@@ -10,17 +10,30 @@ export function HUD({ runtime }: { runtime: GameRuntime }) {
     { label: 'Дульная энергия', value: formatNumber(data.muzzleEnergy), unit: 'J' },
   ];
   return (
-    <div className="hud" aria-label="Параметры выстрела">
-      {values.map((item, index) => (
-        <div className={`hud-item ${index === 3 ? 'accent-value' : ''}`} key={item.label}>
-          <span className="eyebrow">{item.label}</span>
-          <div className="hud-value">
-            {item.value}
-            <span>{item.unit}</span>
+    <>
+      <div className="weapon-status" aria-label="Выбранное оружие">
+        <span>
+          <b>{data.weaponName}</b> / {data.projectileName}
+          {data.weaponPending ? ' · в очереди' : ''}
+        </span>
+        <span>
+          {data.cooldownRemaining > 0
+            ? `До выстрела ${formatNumber(data.cooldownRemaining, 1)} s`
+            : 'Готово к выстрелу'}
+        </span>
+      </div>
+      <div className="hud" aria-label="Параметры выстрела">
+        {values.map((item, index) => (
+          <div className={`hud-item ${index === 3 ? 'accent-value' : ''}`} key={item.label}>
+            <span className="eyebrow">{item.label}</span>
+            <div className="hud-value">
+              {item.value}
+              <span>{item.unit}</span>
+            </div>
           </div>
-        </div>
-      ))}
-    </div>
+        ))}
+      </div>
+    </>
   );
 }
 
@@ -54,6 +67,7 @@ export function FlightTelemetry({ runtime }: { runtime: GameRuntime }) {
           <span>02 / Последнее попадание</span>
           <span className="impact-dot" />
         </div>
+        <p>{data.impactWeapon ? `${data.impactWeapon} / ${data.impactProjectile}` : '—'}</p>
         <div className="telemetry-values">
           <div>
             <span>Энергия удара</span>
@@ -68,6 +82,10 @@ export function FlightTelemetry({ runtime }: { runtime: GameRuntime }) {
             </strong>
           </div>
         </div>
+        <p>
+          Скорость: {formatNumber(data.impactSpeed, 2)} m/s · x: {formatNumber(data.impactX, 2)} m ·
+          y: {formatNumber(data.impactY, 2)} m
+        </p>
         <p>
           {data.removed === null
             ? 'Сделайте первый выстрел по рельефу'

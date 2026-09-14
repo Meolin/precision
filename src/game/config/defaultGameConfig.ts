@@ -1,16 +1,14 @@
 import { clamp } from '../math/Vec2';
+import { validateWeaponOverrides } from '../weapons/WeaponSettings';
 import { numericSettings, settingValue, type GameConfig, type NumericSetting } from './GameConfig';
 
 export const defaultGameConfig: GameConfig = {
   simulation: { tickRate: 60, maxFrameDeltaMs: 250 },
   world: { widthMeters: 120, heightMeters: 64, pixelsPerMeter: 20 },
   physics: { gravity: 9.81, windAcceleration: 0, airDrag: 0 },
-  projectile: { muzzleVelocity: 30, massKg: 5, radiusMeters: 0.12, maxLifetimeSeconds: 20 },
+  weaponOverrides: {},
   terrain: {
     cellSizeMeters: 0.2,
-    baseCraterRadiusMeters: 0.8,
-    maxCraterRadiusMeters: 3,
-    energyToCraterScale: 0.025,
     surfaceHeightFraction: 0.7,
     waveAmplitudeMeters: 4.2,
     noiseAmplitudeMeters: 1,
@@ -18,7 +16,6 @@ export const defaultGameConfig: GameConfig = {
   cannon: {
     minAngleDeg: 5,
     maxAngleDeg: 85,
-    initialAngleDeg: 42,
     barrelLengthMeters: 2.4,
     mountHeightMeters: 1.1,
     spawnXFraction: 0.17,
@@ -32,7 +29,16 @@ export function cloneConfig(config: GameConfig = defaultGameConfig): GameConfig 
     simulation: { ...config.simulation },
     world: { ...config.world },
     physics: { ...config.physics },
-    projectile: { ...config.projectile },
+    weaponOverrides: Object.fromEntries(
+      Object.entries(config.weaponOverrides).map(([id, overrides]) => [
+        id,
+        {
+          weapon: { ...overrides.weapon },
+          projectile: { ...overrides.projectile },
+          impact: { ...overrides.impact },
+        },
+      ]),
+    ),
     terrain: { ...config.terrain },
     cannon: { ...config.cannon },
     preview: { ...config.preview },
@@ -54,6 +60,7 @@ export function withSetting(
 
 export function validateConfig(input: GameConfig): GameConfig {
   const config = cloneConfig(input);
+  config.weaponOverrides = validateWeaponOverrides(config.weaponOverrides);
   for (const setting of numericSettings) {
     const value = settingValue(config, setting);
     const group: Record<string, number> = config[setting.section];
@@ -62,10 +69,6 @@ export function validateConfig(input: GameConfig): GameConfig {
       : settingValue(defaultGameConfig, setting);
   }
   config.simulation.tickRate = Math.round(config.simulation.tickRate);
-  config.terrain.maxCraterRadiusMeters = Math.max(
-    config.terrain.baseCraterRadiusMeters,
-    config.terrain.maxCraterRadiusMeters,
-  );
   const positive = [
     config.simulation.maxFrameDeltaMs,
     config.world.widthMeters,

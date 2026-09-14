@@ -26,6 +26,20 @@
 .panel-settings {
   padding: 0 22px;
 }
+.settings-note {
+  color: var(--dim);
+  font-size: 10px;
+  line-height: 1.6;
+}
+#weapon-selector {
+  width: 100%;
+  padding: 8px;
+  color: var(--text);
+  background: #101618;
+  border: 1px solid #354143;
+  border-radius: 4px;
+  font: 12px var(--mono);
+}
 .settings-group {
   padding: 18px 0;
   border-bottom: 1px solid var(--border);

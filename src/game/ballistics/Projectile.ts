@@ -1,15 +1,25 @@
 import type { GameConfig } from '../config/GameConfig';
 import { muzzlePosition, type CannonState } from '../entities/Cannon';
 import type { EntityId, Vec2 } from '../math/Vec2';
+import type { ImpactDefinitionId } from '../impacts/ImpactDefinition';
+import type { WeaponId } from '../weapons/WeaponDefinition';
+import { resolveWeapon } from '../weapons/WeaponSettings';
+import type { ProjectileDefinitionId } from './ProjectileDefinition';
 
 export interface ProjectileState {
   id: EntityId;
   spawnTick: number;
+  weaponId: WeaponId;
+  projectileDefinitionId: ProjectileDefinitionId;
+  impactDefinitionId: ImpactDefinitionId;
   position: Vec2;
   previousPosition: Vec2;
   velocity: Vec2;
   radius: number;
   massKg: number;
+  gravityScale: number;
+  windInfluence: number;
+  dragCoefficient: number;
   lifetimeSeconds: number;
   maxLifetimeSeconds: number;
   alive: boolean;
@@ -22,19 +32,26 @@ export function createProjectile(
   tick: number,
 ): ProjectileState {
   const position = muzzlePosition(cannon, config);
+  const { weapon, projectile } = resolveWeapon(config, cannon.weaponId);
   return {
     id,
     spawnTick: tick,
+    weaponId: weapon.id,
+    projectileDefinitionId: projectile.id,
+    impactDefinitionId: projectile.impactDefinitionId,
     position,
     previousPosition: { ...position },
     velocity: {
-      x: Math.cos(cannon.angleRad) * config.projectile.muzzleVelocity,
-      y: -Math.sin(cannon.angleRad) * config.projectile.muzzleVelocity,
+      x: Math.cos(cannon.angleRad) * weapon.muzzleVelocity,
+      y: -Math.sin(cannon.angleRad) * weapon.muzzleVelocity,
     },
-    radius: config.projectile.radiusMeters,
-    massKg: config.projectile.massKg,
+    radius: projectile.radiusMeters,
+    massKg: projectile.massKg,
+    gravityScale: projectile.gravityScale,
+    windInfluence: projectile.windInfluence,
+    dragCoefficient: projectile.dragCoefficient,
     lifetimeSeconds: 0,
-    maxLifetimeSeconds: config.projectile.maxLifetimeSeconds,
+    maxLifetimeSeconds: projectile.maxLifetimeSeconds,
     alive: true,
   };
 }

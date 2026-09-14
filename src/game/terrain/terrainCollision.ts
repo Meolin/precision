@@ -4,6 +4,7 @@ import type { TerrainGrid } from './TerrainGrid';
 export interface TerrainHit {
   position: Vec2;
   fraction: number;
+  normal?: Vec2;
 }
 
 /** Circle vs occupied cell rectangles, including projectile radius. */

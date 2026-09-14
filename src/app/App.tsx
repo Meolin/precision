@@ -2,6 +2,8 @@ import { useCallback, useState } from 'react';
 import type { NumericSetting } from '../game/config/GameConfig';
 import { withSetting } from '../game/config/defaultGameConfig';
 import type { GameRuntime } from '../game/core/GameRuntime';
+import type { WeaponId } from '../game/weapons/WeaponDefinition';
+import { withWeaponSetting, type WeaponNumericSetting } from '../game/weapons/WeaponSettings';
 import { defaultDebugOptions, type DebugOptions } from '../game/rendering/DebugOptions';
 import { GameCanvas } from '../game/rendering/GameCanvas';
 import { FlightTelemetry, HUD, SceneStatus } from '../ui/HUD/HUD';
@@ -19,6 +21,8 @@ export function App({ runtime }: { runtime: GameRuntime }) {
   const resetScene = useCallback(() => runtime.reset(), [runtime]);
   const updateSetting = (setting: NumericSetting, value: number) =>
     setConfig(runtime.updateConfig(withSetting(runtime.getConfig(), setting, value)));
+  const updateWeaponSetting = (id: WeaponId, setting: WeaponNumericSetting, value: number) =>
+    setConfig(runtime.updateConfig(withWeaponSetting(runtime.getConfig(), id, setting, value)));
   const updateDebug = (key: keyof DebugOptions, value: boolean) => {
     setDebug((current) => ({ ...current, [key]: value }));
     if (key === 'samples') runtime.recordCollisionSamples = value;
@@ -37,7 +41,7 @@ export function App({ runtime }: { runtime: GameRuntime }) {
             BALLISTICS<span className="brand-divider">/</span>
             <b>LAB</b>
           </span>
-          <span className="version-badge">MVP 0.1</span>
+          <span className="version-badge">STEP 2</span>
         </div>
         <span className="header-note">
           <span className="status-dot" />
@@ -120,6 +124,10 @@ export function App({ runtime }: { runtime: GameRuntime }) {
               <kbd>D</kbd> угол
             </span>
             <span>
+              <kbd>1</kbd>
+              <kbd>2</kbd> оружие
+            </span>
+            <span>
               <kbd>P</kbd> пауза
             </span>
             <span>
@@ -133,10 +141,12 @@ export function App({ runtime }: { runtime: GameRuntime }) {
           </p>
         </div>
         <TechnicalPanel
+          runtime={runtime}
           config={config}
           debug={debug}
           paused={paused}
           onSetting={updateSetting}
+          onWeaponSetting={updateWeaponSetting}
           onDebug={updateDebug}
           onPause={togglePause}
           onStep={() => runtime.step()}

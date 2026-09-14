@@ -1,18 +1,13 @@
+import type { WeaponId } from '../weapons/WeaponDefinition';
+import type { WeaponOverrides } from '../weapons/WeaponSettings';
+
 export interface GameConfig {
   simulation: { tickRate: number; maxFrameDeltaMs: number };
   world: { widthMeters: number; heightMeters: number; pixelsPerMeter: number };
   physics: { gravity: number; windAcceleration: number; airDrag: number };
-  projectile: {
-    muzzleVelocity: number;
-    massKg: number;
-    radiusMeters: number;
-    maxLifetimeSeconds: number;
-  };
+  weaponOverrides: Partial<Record<WeaponId, WeaponOverrides>>;
   terrain: {
     cellSizeMeters: number;
-    baseCraterRadiusMeters: number;
-    maxCraterRadiusMeters: number;
-    energyToCraterScale: number;
     surfaceHeightFraction: number;
     waveAmplitudeMeters: number;
     noiseAmplitudeMeters: number;
@@ -20,7 +15,6 @@ export interface GameConfig {
   cannon: {
     minAngleDeg: number;
     maxAngleDeg: number;
-    initialAngleDeg: number;
     barrelLengthMeters: number;
     mountHeightMeters: number;
     spawnXFraction: number;
@@ -29,7 +23,7 @@ export interface GameConfig {
   preview: { maxSeconds: number; maxPoints: number };
 }
 
-export type EditableSection = 'simulation' | 'physics' | 'projectile' | 'terrain';
+export type EditableSection = 'simulation' | 'physics';
 interface SettingDefinition<Section extends EditableSection> {
   section: Section;
   key: keyof GameConfig[Section];
@@ -80,69 +74,6 @@ export const numericSettings: readonly NumericSetting[] = [
     min: 0,
     max: 2,
     step: 0.01,
-  },
-  {
-    section: 'projectile',
-    key: 'muzzleVelocity',
-    label: 'Начальная скорость',
-    unit: 'm/s',
-    min: 1,
-    max: 120,
-    step: 0.5,
-  },
-  {
-    section: 'projectile',
-    key: 'massKg',
-    label: 'Масса',
-    unit: 'kg',
-    min: 0.1,
-    max: 50,
-    step: 0.1,
-  },
-  {
-    section: 'projectile',
-    key: 'radiusMeters',
-    label: 'Радиус',
-    unit: 'm',
-    min: 0.03,
-    max: 0.5,
-    step: 0.01,
-  },
-  {
-    section: 'projectile',
-    key: 'maxLifetimeSeconds',
-    label: 'Время жизни',
-    unit: 's',
-    min: 1,
-    max: 30,
-    step: 1,
-  },
-  {
-    section: 'terrain',
-    key: 'baseCraterRadiusMeters',
-    label: 'Базовый кратер',
-    unit: 'm',
-    min: 0.1,
-    max: 3,
-    step: 0.1,
-  },
-  {
-    section: 'terrain',
-    key: 'energyToCraterScale',
-    label: 'Масштаб энергии',
-    unit: 'm/√J',
-    min: 0,
-    max: 0.1,
-    step: 0.001,
-  },
-  {
-    section: 'terrain',
-    key: 'maxCraterRadiusMeters',
-    label: 'Максимум кратера',
-    unit: 'm',
-    min: 0.1,
-    max: 8,
-    step: 0.1,
   },
 ];
 

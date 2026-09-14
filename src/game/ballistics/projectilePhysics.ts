@@ -4,7 +4,7 @@ import { sweepTerrain, type TerrainHit } from '../terrain/terrainCollision';
 import type { TerrainGrid } from '../terrain/TerrainGrid';
 import type { ProjectileState } from './Projectile';
 
-export const kineticEnergy = (massKg: number, velocity: Vec2): number =>
+export const calculateKineticEnergy = (massKg: number, velocity: Vec2): number =>
   0.5 * massKg * lengthSquared(velocity);
 
 /** Semi-implicit Euler; exponential linear drag in s^-1 cannot reverse velocity. */
@@ -14,9 +14,11 @@ export function stepProjectile(
   dt: number,
 ): void {
   projectile.previousPosition = { ...projectile.position };
-  const retention = Math.exp(-physics.airDrag * dt);
-  projectile.velocity.x = (projectile.velocity.x + physics.windAcceleration * dt) * retention;
-  projectile.velocity.y = (projectile.velocity.y + physics.gravity * dt) * retention;
+  const retention = Math.exp(-physics.airDrag * projectile.dragCoefficient * dt);
+  projectile.velocity.x =
+    (projectile.velocity.x + physics.windAcceleration * projectile.windInfluence * dt) * retention;
+  projectile.velocity.y =
+    (projectile.velocity.y + physics.gravity * projectile.gravityScale * dt) * retention;
   projectile.position.x += projectile.velocity.x * dt;
   projectile.position.y += projectile.velocity.y * dt;
   projectile.lifetimeSeconds += dt;

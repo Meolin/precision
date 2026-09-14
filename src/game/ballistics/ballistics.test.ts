@@ -3,13 +3,19 @@ import { cloneConfig } from '../config/defaultGameConfig';
 import { createGameState } from '../core/GameState';
 import { TerrainGrid } from '../terrain/TerrainGrid';
 import { createProjectile, type ProjectileState } from './Projectile';
-import { advanceProjectile, kineticEnergy, stepProjectile } from './projectilePhysics';
+import { advanceProjectile, calculateKineticEnergy, stepProjectile } from './projectilePhysics';
 import { simulateTrajectoryPreview } from './trajectoryPreview';
 
 function projectile(): ProjectileState {
   return {
     id: 2,
     spawnTick: 0,
+    weaponId: 'basicCannon',
+    projectileDefinitionId: 'basicShell',
+    impactDefinitionId: 'basicImpact',
+    gravityScale: 1,
+    windInfluence: 1,
+    dragCoefficient: 1,
     position: { x: 2, y: 3 },
     previousPosition: { x: 2, y: 3 },
     velocity: { x: 10, y: -5 },
@@ -52,23 +58,23 @@ describe('projectile physics', () => {
     stepProjectile(shell, { gravity: 0, windAcceleration: 0, airDrag: 2 }, 1);
     expect(shell.velocity.x).toBeCloseTo(10 * Math.exp(-2));
     expect(shell.velocity.y).toBeLessThan(0);
-    expect(kineticEnergy(shell.massKg, shell.velocity)).toBeLessThan(312.5);
+    expect(calculateKineticEnergy(shell.massKg, shell.velocity)).toBeLessThan(312.5);
   });
 
   it('calculates kinetic energy using both velocity components', () => {
-    expect(kineticEnergy(5, { x: 30, y: 0 })).toBe(2250);
-    expect(kineticEnergy(2, { x: 3, y: 4 })).toBe(25);
-    expect(kineticEnergy(5, { x: 60, y: 0 })).toBe(9000);
+    expect(calculateKineticEnergy(5, { x: 30, y: 0 })).toBe(2250);
+    expect(calculateKineticEnergy(2, { x: 3, y: 4 })).toBe(25);
+    expect(calculateKineticEnergy(5, { x: 60, y: 0 })).toBe(9000);
   });
 
   it('copies projectile properties at spawn', () => {
     const config = cloneConfig();
     const state = createGameState(config, 12345);
     const shell = createProjectile(state.cannon, config, 2, 7);
-    config.projectile.massKg = 20;
-    config.projectile.radiusMeters = 0.4;
-    config.projectile.muzzleVelocity = 100;
-    config.projectile.maxLifetimeSeconds = 1;
+    config.weaponOverrides.basicCannon = {
+      weapon: { muzzleVelocity: 100 },
+      projectile: { massKg: 20, radiusMeters: 0.4, maxLifetimeSeconds: 1 },
+    };
     expect(shell.massKg).toBe(5);
     expect(shell.radius).toBe(0.12);
     expect(Math.hypot(shell.velocity.x, shell.velocity.y)).toBeCloseTo(30);
