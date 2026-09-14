@@ -1,4 +1,4 @@
-import type { Vec2 } from '../math/Vec2';
+import { normalize, type Vec2 } from '../math/Vec2';
 import { findTerrainContactCell } from '../terrain/terrainCollision';
 import type { TerrainGrid } from '../terrain/TerrainGrid';
 import { TerrainMaterialId } from '../terrain/TerrainMaterialId';
@@ -25,6 +25,8 @@ export function impactMaterial(
 }
 
 export interface PenetrationInput {
+  /** Reuse the shared ImpactContext direction when called from the impact pipeline. */
+  incomingDirection?: Vec2;
   entryPosition: Vec2;
   velocity: Vec2;
   initialEnergyJ: number;
@@ -92,7 +94,7 @@ export function resolvePenetration(input: PenetrationInput): PenetrationResult {
     result.reason = 'noContact';
     return result;
   }
-  const direction = { x: velocity.x / speed, y: velocity.y / speed };
+  const direction = input.incomingDirection ?? normalize(velocity);
   const stepSize = terrain.cellSizeMeters * 0.5;
   const epsilon = terrain.cellSizeMeters * 0.001;
   const positionAt = (distance: number): Vec2 => ({
@@ -193,6 +195,7 @@ export function createActivePenetration(input: PenetrationInput): ActivePenetrat
   )
     return null;
   const sampleStepMeters = terrain.cellSizeMeters * 0.5;
+  const direction = input.incomingDirection ?? normalize(velocity);
   const materialSamples: TerrainMaterialId[] = [];
   let exitDistanceMeters = definition.maxPenetrationDistanceMeters;
   for (
@@ -203,10 +206,21 @@ export function createActivePenetration(input: PenetrationInput): ActivePenetrat
   ) {
     const distance = sample * sampleStepMeters + sampleStepMeters * 0.5;
     const samplePosition = {
-      x: entryPosition.x + (velocity.x / speed) * distance,
-      y: entryPosition.y + (velocity.y / speed) * distance,
+      x: entryPosition.x + direction.x * distance,
+      y: entryPosition.y + direction.y * distance,
     };
-    const sampledMaterial = impactMaterial(terrain, samplePosition, radiusMeters);
+    let sampledMaterial = impactMaterial(terrain, samplePosition, radiusMeters);
+    // An Air midpoint does not guarantee that the start of this interval is clear.
+    // Capture the trailing material before channel damage can erase that evidence.
+    if (sampledMaterial === TerrainMaterialId.Air)
+      sampledMaterial = impactMaterial(
+        terrain,
+        {
+          x: entryPosition.x + direction.x * sample * sampleStepMeters,
+          y: entryPosition.y + direction.y * sample * sampleStepMeters,
+        },
+        radiusMeters,
+      );
     materialSamples.push(sampledMaterial);
     if (sampledMaterial === TerrainMaterialId.Air) {
       exitDistanceMeters = sample * sampleStepMeters;
@@ -215,7 +229,7 @@ export function createActivePenetration(input: PenetrationInput): ActivePenetrat
   }
   return {
     position: { ...entryPosition },
-    direction: { x: velocity.x / speed, y: velocity.y / speed },
+    direction: { ...direction },
     materialId,
     energyJ,
     initialEnergyJ: energyJ,

@@ -13,6 +13,7 @@ export function createGameSnapshot(state: Readonly<GameState>) {
       position: { ...p.position },
       previousPosition: { ...p.previousPosition },
       velocity: { ...p.velocity },
+      ricochet: { ...p.ricochet },
       ...(p.penetration ? { penetration: { ...p.penetration } } : {}),
       ...(p.penetrationState
         ? {
@@ -38,6 +39,7 @@ export function createGameSnapshot(state: Readonly<GameState>) {
           ...state.lastImpact,
           position: { ...state.lastImpact.position },
           velocity: { ...state.lastImpact.velocity },
+          contactPoint: { ...state.lastImpact.contactPoint },
           ...(state.lastImpact.surfaceNormal
             ? { surfaceNormal: { ...state.lastImpact.surfaceNormal } }
             : {}),

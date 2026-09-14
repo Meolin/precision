@@ -3,6 +3,7 @@ import { cloneConfig } from '../config/defaultGameConfig';
 import { createGameState } from '../core/GameState';
 import { TerrainGrid } from '../terrain/TerrainGrid';
 import { createProjectile, type ProjectileState } from './Projectile';
+import { projectileDefinitions } from './projectileDefinitions';
 import { advanceProjectile, calculateKineticEnergy, stepProjectile } from './projectilePhysics';
 import { simulateTrajectoryPreview } from './trajectoryPreview';
 
@@ -24,6 +25,8 @@ function projectile(): ProjectileState {
     lifetimeSeconds: 0,
     maxLifetimeSeconds: 20,
     alive: true,
+    ricochetCount: 0,
+    ricochet: { ...projectileDefinitions.basicShell.ricochet },
   };
 }
 

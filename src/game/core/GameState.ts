@@ -11,10 +11,15 @@ import type { ImpactResolution } from '../impacts/ImpactResolution';
 
 /** Persistent telemetry, separate from the transient event queue. */
 export interface LastImpact extends ImpactEvent {
+  result: ImpactResolution['type'];
+  impactAngleRad: number;
+  ricochetCount: number;
+  maxRicochets: number;
+  energyRetention: number;
   craterRadiusMeters: number;
   removedCells: number;
   materialId: TerrainMaterialId;
-  penetrationStatus: 'penetrating' | 'success' | 'stopped' | 'disabled';
+  penetrationStatus: 'penetrating' | 'success' | 'stopped' | 'disabled' | 'notAttempted';
   penetrationDistanceMeters: number;
   energyLostJ: number;
   remainingEnergyJ: number;

@@ -22,6 +22,8 @@ const impact: ImpactEvent = {
   velocity: { x: 6, y: 8 },
   speed: 10,
   kineticEnergyJ: 100,
+  surfaceNormal: { x: 0, y: -1 },
+  contactPoint: { x: 5, y: 5 },
 };
 
 function contactScene() {

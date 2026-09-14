@@ -74,6 +74,8 @@ export class SceneRenderer {
           this.trajectory
             .circle(point.x, point.y, 1.65 * pixel)
             .fill({ color: colors.accent, alpha: 0.65 });
+        for (const point of preview.ricochets ?? [])
+          this.trajectory.circle(point.x, point.y, 4 * pixel).fill(0x85d7e8);
         if (preview.impact) {
           const { x, y } = preview.impact;
           this.trajectory
@@ -147,11 +149,33 @@ export class SceneRenderer {
       }
     }
     if (options.impact && state.lastImpact) {
-      const { position: impact, craterRadiusMeters } = state.lastImpact;
+      const { craterRadiusMeters } = state.lastImpact;
+      const impact =
+        state.lastImpact.result === 'ricochet'
+          ? state.lastImpact.contactPoint
+          : state.lastImpact.position;
       this.debug
         .circle(impact.x, impact.y, craterRadiusMeters)
         .stroke({ color: colors.orange, width: pixel, alpha: 0.65 });
       this.debug.circle(impact.x, impact.y, 2 * pixel).fill(colors.orange);
+    }
+    if (options.surfaceNormals && state.lastImpact) {
+      const { contactPoint: point, surfaceNormal: normal } = state.lastImpact;
+      const length = 2;
+      const end = { x: point.x + normal.x * length, y: point.y + normal.y * length };
+      this.debug.circle(point.x, point.y, 3 * pixel).fill(0x85d7e8);
+      this.debug
+        .moveTo(point.x, point.y)
+        .lineTo(end.x, end.y)
+        .stroke({ color: 0x85d7e8, width: 1.5 * pixel });
+      for (const sign of [-1, 1])
+        this.debug
+          .moveTo(end.x, end.y)
+          .lineTo(
+            end.x - normal.x * 6 * pixel + sign * normal.y * 3 * pixel,
+            end.y - normal.y * 6 * pixel - sign * normal.x * 3 * pixel,
+          )
+          .stroke({ color: 0x85d7e8, width: 1.5 * pixel });
     }
     if (options.samples)
       for (const point of runtime.collisionSamples)

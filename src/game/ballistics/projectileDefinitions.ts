@@ -12,6 +12,13 @@ export const projectileDefinitions: Readonly<Record<ProjectileDefinitionId, Proj
       dragCoefficient: 1,
       maxLifetimeSeconds: 20,
       impactDefinitionId: 'basicImpact',
+      ricochet: Object.freeze({
+        enabled: true,
+        minRicochetAngleDeg: 70,
+        minSpeedMetersPerSecond: 10,
+        energyRetention: 0.55,
+        maxRicochets: 1,
+      }),
       penetration: Object.freeze({
         enabled: false,
         penetrationPower: 1,
@@ -30,6 +37,13 @@ export const projectileDefinitions: Readonly<Record<ProjectileDefinitionId, Proj
       dragCoefficient: 1,
       maxLifetimeSeconds: 20,
       impactDefinitionId: 'mortarImpact',
+      ricochet: Object.freeze({
+        enabled: false,
+        minRicochetAngleDeg: 80,
+        minSpeedMetersPerSecond: 12,
+        energyRetention: 0.35,
+        maxRicochets: 0,
+      }),
       penetration: Object.freeze({
         enabled: false,
         penetrationPower: 0.4,
@@ -48,6 +62,13 @@ export const projectileDefinitions: Readonly<Record<ProjectileDefinitionId, Proj
       dragCoefficient: 1,
       maxLifetimeSeconds: 20,
       impactDefinitionId: 'penetratorImpact',
+      ricochet: Object.freeze({
+        enabled: true,
+        minRicochetAngleDeg: 60,
+        minSpeedMetersPerSecond: 10,
+        energyRetention: 0.65,
+        maxRicochets: 2,
+      }),
       penetration: Object.freeze({
         enabled: true,
         penetrationPower: 4,

@@ -21,6 +21,7 @@ export interface WeaponOverrides {
     >
   >;
   impact?: Partial<Omit<ImpactDefinition['terrainDamage'], 'enabled'>>;
+  ricochet?: Partial<ProjectileDefinition['ricochet']>;
 }
 
 export function resolveWeapon(config: Pick<GameConfig, 'weaponOverrides'>, id: WeaponId) {
@@ -29,6 +30,10 @@ export function resolveWeapon(config: Pick<GameConfig, 'weaponOverrides'>, id: W
   const projectile = {
     ...projectileDefinitions[weapon.projectileDefinitionId],
     ...overrides?.projectile,
+    ricochet: {
+      ...projectileDefinitions[weapon.projectileDefinitionId].ricochet,
+      ...overrides?.ricochet,
+    },
   };
   return {
     weapon,
@@ -41,7 +46,7 @@ type WeaponSection = keyof WeaponOverrides;
 export type WeaponNumericSetting = {
   [Section in WeaponSection]: {
     section: Section;
-    key: keyof NonNullable<WeaponOverrides[Section]>;
+    key: Exclude<keyof NonNullable<WeaponOverrides[Section]>, 'enabled'>;
     label: string;
     unit: string;
     min: number;
@@ -51,6 +56,42 @@ export type WeaponNumericSetting = {
 }[WeaponSection];
 
 export const weaponNumericSettings: readonly WeaponNumericSetting[] = [
+  {
+    section: 'ricochet',
+    key: 'minRicochetAngleDeg',
+    label: 'Минимальный угол',
+    unit: '°',
+    min: 0,
+    max: 89,
+    step: 1,
+  },
+  {
+    section: 'ricochet',
+    key: 'minSpeedMetersPerSecond',
+    label: 'Минимальная скорость',
+    unit: 'm/s',
+    min: 1,
+    max: 120,
+    step: 1,
+  },
+  {
+    section: 'ricochet',
+    key: 'energyRetention',
+    label: 'Доля сохранённой энергии',
+    unit: '×',
+    min: 0.01,
+    max: 0.99,
+    step: 0.01,
+  },
+  {
+    section: 'ricochet',
+    key: 'maxRicochets',
+    label: 'Максимум рикошетов',
+    unit: '',
+    min: 0,
+    max: 8,
+    step: 1,
+  },
   {
     section: 'weapon',
     key: 'muzzleVelocity',
@@ -159,6 +200,7 @@ export function weaponSettingValue(
 ): number {
   const resolved = resolveWeapon(config, id);
   if (setting.section === 'impact') return resolved.impact.terrainDamage[setting.key];
+  if (setting.section === 'ricochet') return resolved.projectile.ricochet[setting.key];
   if (setting.section === 'projectile') return resolved.projectile[setting.key];
   return resolved.weapon[setting.key];
 }
@@ -199,13 +241,31 @@ export function validateWeaponOverrides(
     const source = input[id];
     if (!source) continue;
     const target: WeaponOverrides = {};
+    if (typeof source.ricochet?.enabled === 'boolean')
+      target.ricochet = { enabled: source.ricochet.enabled };
     for (const setting of weaponNumericSettings) {
       const value = (source[setting.section] as Record<string, number> | undefined)?.[setting.key];
       if (value === undefined || !Number.isFinite(value)) continue;
       const group = (target[setting.section] ??= {}) as Record<string, number>;
-      group[setting.key] = clamp(value, setting.min, setting.max);
+      const bounded = clamp(value, setting.min, setting.max);
+      group[setting.key] = setting.key === 'maxRicochets' ? Math.round(bounded) : bounded;
     }
     result[id] = target;
   }
   return result;
+}
+
+export function withRicochetEnabled(
+  config: GameConfig,
+  id: WeaponId,
+  enabled: boolean,
+): GameConfig {
+  const overrides = config.weaponOverrides[id];
+  return {
+    ...config,
+    weaponOverrides: {
+      ...config.weaponOverrides,
+      [id]: { ...overrides, ricochet: { ...overrides?.ricochet, enabled } },
+    },
+  };
 }

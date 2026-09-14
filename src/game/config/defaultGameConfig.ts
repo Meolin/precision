@@ -38,6 +38,7 @@ export function cloneConfig(config: GameConfig = defaultGameConfig): GameConfig 
           weapon: { ...overrides.weapon },
           projectile: { ...overrides.projectile },
           impact: { ...overrides.impact },
+          ricochet: { ...overrides.ricochet },
         },
       ]),
     ),

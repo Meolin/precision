@@ -18,7 +18,8 @@ export interface ImpactEvent {
   velocity: Vec2;
   speed: number;
   kineticEnergyJ: number;
-  surfaceNormal?: Vec2;
+  surfaceNormal: Vec2;
+  contactPoint: Vec2;
 }
 
 export function createImpactEvent(
@@ -37,6 +38,7 @@ export function createImpactEvent(
     velocity: { ...projectile.velocity },
     speed: Math.hypot(projectile.velocity.x, projectile.velocity.y),
     kineticEnergyJ: calculateKineticEnergy(projectile.massKg, projectile.velocity),
-    ...(hit.normal ? { surfaceNormal: { ...hit.normal } } : {}),
+    surfaceNormal: { ...hit.normal },
+    contactPoint: { ...hit.contactPoint },
   };
 }

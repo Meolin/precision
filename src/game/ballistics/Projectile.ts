@@ -24,6 +24,8 @@ export interface ProjectileState {
   lifetimeSeconds: number;
   maxLifetimeSeconds: number;
   alive: boolean;
+  ricochetCount: number;
+  readonly ricochet: ProjectileDefinition['ricochet'];
   readonly penetration?: ProjectileDefinition['penetration'];
   penetrationState?: ActivePenetrationState;
 }
@@ -56,6 +58,8 @@ export function createProjectile(
     lifetimeSeconds: 0,
     maxLifetimeSeconds: projectile.maxLifetimeSeconds,
     alive: true,
+    ricochetCount: 0,
+    ricochet: { ...projectile.ricochet },
     ...(projectile.penetration ? { penetration: { ...projectile.penetration } } : {}),
   };
 }

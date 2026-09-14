@@ -5,8 +5,11 @@ import type { ImpactEvent } from './ImpactEvent';
 import type { ProjectileState } from '../ballistics/Projectile';
 import type { TerrainGrid } from '../terrain/TerrainGrid';
 import type { ImpactResolution } from './ImpactResolution';
-import { createActivePenetration, impactMaterial } from './resolvePenetration';
+import { createActivePenetration } from './resolvePenetration';
 import type { ProjectilePenetrationDefinition } from './ProjectilePenetrationDefinition';
+import { createImpactContext } from './ImpactContext';
+import { resolveRicochet } from './resolveRicochet';
+import { separateRicochet } from './ricochetContinuation';
 
 export function penetrationChannelRadius(
   projectileRadius: number,
@@ -35,10 +38,72 @@ export function craterRadius(energyJ: number, damage: ImpactDefinition['terrainD
 export function resolveImpact(
   event: ImpactEvent,
   definition: ImpactDefinition,
-  projectile: Pick<ProjectileState, 'massKg' | 'radius' | 'penetration'>,
+  projectile: Pick<
+    ProjectileState,
+    'massKg' | 'radius' | 'penetration' | 'ricochet' | 'ricochetCount'
+  >,
   terrain: TerrainGrid,
 ): ImpactResolution {
-  const materialId = impactMaterial(terrain, event.position, projectile.radius);
+  const context = createImpactContext(event, projectile.radius, terrain);
+  const materialId = context.material.id;
+  const facts = {
+    materialId,
+    impactAngleRad: context.impactAngleRad,
+    surfaceNormal: { ...context.surfaceNormal },
+    initialEnergyJ: event.kineticEnergyJ,
+  };
+  const ricochet = resolveRicochet(
+    context,
+    projectile.ricochet,
+    projectile.massKg,
+    projectile.ricochetCount,
+  );
+  if (ricochet.ricocheted || ricochet.reason === 'exhausted') {
+    const finalPosition = ricochet.ricocheted
+      ? separateRicochet(event.position, context.surfaceNormal, projectile.radius, terrain)
+      : null;
+    const energyLostJ =
+      ricochet.ricocheted && finalPosition ? ricochet.energyLostJ : event.kineticEnergyJ;
+    const terrainDamageEvents: TerrainDamageEvent[] = [];
+    const chip = definition.ricochetDamage;
+    if (definition.terrainDamage.enabled && chip?.enabled)
+      terrainDamageEvents.push({
+        type: 'terrainDamage',
+        tick: event.tick,
+        sourceProjectileId: event.projectileId,
+        operation: {
+          type: 'circle',
+          center: { ...event.contactPoint },
+          radiusMeters: craterRadius(energyLostJ, chip),
+        },
+        energyJ: energyLostJ,
+      });
+    if (ricochet.ricocheted && finalPosition)
+      return {
+        ...facts,
+        type: 'ricochet',
+        continuePenetration: false,
+        terrainDamageEvents,
+        finalPosition,
+        remainingVelocity: { ...ricochet.outgoingVelocity },
+        remainingEnergyJ: ricochet.remainingEnergyJ,
+        energyLostJ,
+        energyRetention: ricochet.energyRetention,
+        ricochetCount: projectile.ricochetCount + 1,
+        penetrationDistanceMeters: 0,
+      };
+    // A candidate bounce with no viable exit speed/clearance stops at the surface.
+    return {
+      ...facts,
+      type: 'stop',
+      continuePenetration: false,
+      terrainDamageEvents,
+      finalPosition: { ...event.position },
+      remainingVelocity: { x: 0, y: 0 },
+      remainingEnergyJ: 0,
+      penetrationDistanceMeters: 0,
+    };
+  }
   // Read intact material once, then keep traversal state on the projectile. The
   // full path is deliberately not resolved here: one fixed tick may consume only
   // `speed * dt` metres of material.
@@ -51,6 +116,7 @@ export function resolveImpact(
         radiusMeters: projectile.radius,
         definition: projectile.penetration,
         terrain,
+        incomingDirection: context.incomingDirection,
       })
     : null;
   const penetration = activePenetration
@@ -88,7 +154,7 @@ export function resolveImpact(
       energyJ: event.kineticEnergyJ,
     });
   const common = {
-    materialId,
+    ...facts,
     terrainDamageEvents,
     ...(penetration ? { penetration } : {}),
   };

@@ -60,6 +60,10 @@ export function FlightTelemetry({ runtime }: { runtime: GameRuntime }) {
             </strong>
           </div>
         </div>
+        <p>
+          Рикошеты: {formatNumber(data.activeRicochetCount)} /{' '}
+          {formatNumber(data.activeMaxRicochets)}
+        </p>
         <p>Данные последнего активного снаряда</p>
       </div>
       <div className="telemetry-column impact-column">
@@ -69,6 +73,14 @@ export function FlightTelemetry({ runtime }: { runtime: GameRuntime }) {
         </div>
         <p>{data.impactWeapon ? `${data.impactWeapon} / ${data.impactProjectile}` : '—'}</p>
         <p>
+          Результат: <b>{data.impactResult?.toUpperCase() ?? '—'}</b> · Угол попадания:{' '}
+          <b>{formatNumber(data.impactAngle, 1)}°</b>
+        </p>
+        <p>
+          Нормаль: x {formatNumber(data.impactNormal?.x ?? null, 3)} · y{' '}
+          {formatNumber(data.impactNormal?.y ?? null, 3)}
+        </p>
+        <p>
           Материал: <b>{data.impactMaterial ?? '—'}</b> · Пробитие:{' '}
           <b>
             {data.penetrationStatus === 'success'
@@ -77,9 +89,11 @@ export function FlightTelemetry({ runtime }: { runtime: GameRuntime }) {
                 ? 'В ПРОЦЕССЕ'
                 : data.penetrationStatus === 'stopped'
                   ? 'STOPPED'
-                  : data.penetrationStatus === 'disabled'
-                    ? 'ВЫКЛЮЧЕНО'
-                    : '—'}
+                  : data.penetrationStatus === 'notAttempted'
+                    ? 'НЕ ПРИМЕНЯЛОСЬ'
+                    : data.penetrationStatus === 'disabled'
+                      ? 'ВЫКЛЮЧЕНО'
+                      : '—'}
           </b>
         </p>
         <div className="telemetry-values">
@@ -90,7 +104,7 @@ export function FlightTelemetry({ runtime }: { runtime: GameRuntime }) {
             </strong>
           </div>
           <div>
-            <span>Радиус кратера</span>
+            <span>{data.impactResult === 'ricochet' ? 'Радиус скола' : 'Радиус кратера'}</span>
             <strong>
               {formatNumber(data.crater, 2)} <small>m</small>
             </strong>
@@ -120,12 +134,20 @@ export function FlightTelemetry({ runtime }: { runtime: GameRuntime }) {
             </strong>
           </div>
           <div>
-            <span>Скорость выхода</span>
+            <span>
+              {data.impactResult === 'ricochet' ? 'Скорость после рикошета' : 'Скорость выхода'}
+            </span>
             <strong>
               {formatNumber(data.exitSpeed, 2)} <small>m/s</small>
             </strong>
           </div>
         </div>
+        {data.impactResult === 'ricochet' && (
+          <p>
+            Сохранено энергии: {formatNumber(data.energyRetention)}% · Рикошеты:{' '}
+            {formatNumber(data.ricochetCount)} / {formatNumber(data.maxRicochets)}
+          </p>
+        )}
         <p>
           {data.removed === null
             ? 'Сделайте первый выстрел по рельефу'

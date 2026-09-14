@@ -1,7 +1,8 @@
 # Ballistics Lab
 
-Локальный MVP 2D-полигона, Step 3: процедурный разрушаемый рельеф Soil/Rock, неподвижное орудие,
-Basic Cannon / Mortar / Heavy Penetrator, пробитие с потерей энергии и техническая панель. React 19, TypeScript, Vite, PixiJS 8
+Локальный MVP 2D-полигона, Step 4: процедурный разрушаемый рельеф Soil/Rock, неподвижное орудие,
+Basic Cannon / Mortar / Heavy Penetrator, пробитие и рикошет с потерей энергии,
+нормали поверхности, углы попадания и техническая панель. React 19, TypeScript, Vite, PixiJS 8
 и `@pixi/react`. Без сервера и внешних игровых ресурсов; после установки зависимостей
 приложение не требует подключения к интернету.
 
@@ -61,6 +62,11 @@ npm run preview
 | Penetration power             | 1            | 0.4          | 4                      |
 | Максимальный путь в материале | 2 m          | 0.8 m        | 24 m                   |
 | Порог энергии выхода          | 20 J         | 50 J         | 50 J                   |
+| Рикошет по Rock               | Включён      | Выключен     | Включён                |
+| Минимальный угол рикошета     | 70°          | 80°          | 60°                    |
+| Минимальная скорость          | 10 m/s       | 12 m/s       | 10 m/s                 |
+| Сохранение энергии            | 55%          | 35%          | 65%                    |
+| Максимум рикошетов            | 1            | 0            | 2                      |
 
 Cooldown считается по времени симуляции и не сбрасывается переключением оружия.
 Выстрел во время cooldown отклоняется; пауза его не ускоряет.
@@ -71,6 +77,13 @@ Cooldown считается по времени симуляции и не сб�
 точка обозначает вход, голубые — шаги расчёта, зелёная — выход, розовая — остановку.
 Параметры penetration-профиля заданы в definitions и показываются только для чтения;
 массу, начальную скорость, размер снаряда и кратер можно менять в прежних числовых полях.
+
+Секция «Рикошет» позволяет включить механику и менять угол, минимальную скорость,
+долю сохранённой энергии и число отражений. Изменения относятся к следующему выстрелу.
+В телеметрии показаны STOP / PENETRATE / RICOCHET, угол, нормаль, оставшаяся/потерянная
+энергия, скорость после отражения и счётчик. Toggle «Нормали поверхности» рисует голубую
+стрелку от последнего контакта. Голубая точка на прогнозе отмечает один рикошет.
+Поверхность исходной карты преимущественно Soil; Rock открывается после разрушения грунта.
 
 ## Архитектура
 
@@ -85,7 +98,7 @@ src/
     entities/            CannonState и размещение по поверхности
     weapons/             WeaponDefinition, registry, runtime overrides
     ballistics/          ProjectileDefinition, ProjectileState, общая физика, preview
-    impacts/             ImpactResolution, penetration traversal, crater law
+    impacts/             ImpactContext, angle, ricochet, penetration, crater/chip law
     terrain/             Material IDs/definitions, Uint8Array grid, collision, circle/capsule
     rendering/           @pixi/react lifecycle и императивный Pixi-адаптер
     input/               DOM-события → команды
@@ -113,12 +126,12 @@ Pixi ticker передаёт длительность кадра в runtime, п�
   При нулевом сопротивлении действует
   обычная баллистика с численной погрешностью интегратора.
 - Снаряд копирует ID оружия, снаряда и impact, массу, радиус, начальную скорость,
-  максимальное время жизни, профиль пробития и множители гравитации, ветра, сопротивления
+  максимальное время жизни, профили пробития/рикошета и множители гравитации, ветра, сопротивления
   при выстреле. Изменения этих полей влияют на **следующие** снаряды. Изменение
   гравитации, ветра и сопротивления действует на существующие снаряды со следующего тика.
 - Definitions — неизменяемые данные и единственный источник defaults.
   `GameConfig` хранит мир и необязательные `weaponOverrides[weaponId]`:
-  секции `weapon`, `projectile`, `impact`. Панель редактирует overrides выбранного оружия;
+  секции `weapon`, `projectile`, `impact`, `ricochet`. Панель редактирует overrides выбранного оружия;
   переключение их сохраняет, «Сбросить настройки» удаляет все overrides.
 - Энергия вычисляется общей `calculateKineticEnergy` как `E = 0.5 × mass × (vx² + vy²)`;
   она не редактируется и не вычисляется отдельной формулой в UI.
@@ -133,12 +146,15 @@ Pixi ticker передаёт длительность кадра в runtime, п�
   на 17% ширины карты. Свойства генерации находятся в конфиге.
 - Swept collision проверяет сегмент с шагом не больше половины ячейки, учитывает
   радиус снаряда и уточняет первый контакт бинарным поиском. Collision не решает судьбу снаряда.
-  `resolveImpact` возвращает `stop` / `penetrate` и semantic damage operations:
+  Collision также возвращает нормаль и точку касания поверхности, отличную от центра снаряда.
+  `resolveImpact` возвращает `stop` / `penetrate` / `ricochet` и semantic damage operations:
   `{ type: 'circle', center, radiusMeters }` или `{ type: 'capsule', from, to, radiusMeters }`.
   `TerrainDamageEvent` содержит `operation`; удаляются ячейки по их центрам.
 - Renderer обновляет terrain texture только при смене grid или его `version`.
   Прогноз кешируется по конфигу, оружию, углу и версии рельефа. Он вызывает ту же функцию
-  `advanceProjectile`, ограничен временем/числом точек и прекращается при столкновении.
+  `advanceProjectile` и `resolveImpact`, показывает максимум один рикошет и заканчивается
+  перед пробитием или следующим контактом. При рикошете создаёт одну временную копию
+  terrain и применяет тот же скол; исходный grid и его версия сохраняются.
 - `state.events` содержит события только текущего тика: `projectileSpawned`,
   `projectileImpact`, `impactResolved`, `terrainDamage`; очередь очищается в начале следующего тика.
   Для каждого снаряда последствия применяются сразу, поэтому следующие снаряды
@@ -158,10 +174,11 @@ Simulation не импортирует React, Pixi, DOM, часы системы
 Input → FireCommand → Cannon.weaponId → WeaponDefinition + ProjectileDefinition
       → createProjectile → ProjectileState → общая физика
 
-TerrainCollision → ImpactEvent → resolveImpact → material lookup → resolvePenetration
-                 → ImpactResolution(stop / penetrate)
+TerrainCollision → ImpactEvent → ImpactContext → resolveRicochet
+                 → если рикошет не разрешён: createActivePenetration / stop
+                 → ImpactResolution(stop / penetrate / ricochet)
                  → TerrainDamageEvent.operation → removeCircle / removeCapsule
-                 → остановка или exit position + remaining velocity → следующий тик
+                 → остановка, пробитие или отражённая скорость → следующий тик
 ```
 
 Collision не вычисляет кратер. Resolver возвращает данные без мутации terrain.
@@ -182,6 +199,21 @@ Soil имеет сопротивление 1500 J/m, Rock — 12000 J/m. Это 
 Инспектор показывает фактический радиус. Кратер по прежней формуле независим от канала;
 blast resistance сохранён в definitions как справочное значение и пока не влияет на кратеры.
 
+Нормаль — обратный градиент occupancy в ядре 5×5: для геометрии Soil и Rock равны 1,
+Air равен 0. Нормализация защищена от нулевых/нечисловых векторов; fallback направлен
+против движения, а при неопределённом движении — вверх. Угол вычисляется единым helper:
+`acos(clamp(-dot(incomingDirection, normal), -1, 1))`.
+**0° — лобовое, 90° — касательное попадание.** Уходящий контакт (>90°) не отражается.
+
+Рикошет детерминирован. Soil/Air имеют `ricochetFactor = 0`, Rock — `1`.
+Формулы: `reflected = v - 2 * dot(v, n) * n`, `remainingE = E * retention`,
+`speedAfter = sqrt(2 * remainingE / mass)`. Минимальная скорость проверяется до и после
+рикошета; при слишком малой остаточной скорости снаряд останавливается.
+Скол имеет радиус 0.16–0.30 m (Heavy Penetrator — до 0.25 m) и рассчитывается по потерянной
+энергии. Перед продолжением полёта выполняется ограниченный поиск свободного положения
+вдоль нормали с шагом `max(cellSize * 0.1, radius * 0.1)`; position и previousPosition
+получают отдельные копии. Подробнее: [отчёт Step 4](STEP4_REPORT.md).
+
 ## Проверки
 
 ```bash
@@ -192,14 +224,16 @@ npm run build
 npm run format:check
 ```
 
-До Step 3 прошли typecheck, lint, 54 теста Step 2 и production build.
-После перехода на material IDs, ещё до пробития, прошли 55 тестов, включая baseline snapshots.
-Далее пользователь запретил запуск тестов и визуальные проверки: итоговые тесты Step 3
-добавлены, но **не запускались**, браузерная проверка Step 3 **не проводилась**.
-Финальные typecheck, lint и production build проходят.
+При начале Step 4 сохранён baseline `bc0cefe`. Исходный набор Step 3 выявил преждевременный
+выход активного penetrator; после отдельного исправления прошли 89 тестов, включая четыре
+неизменённых snapshot. Во время миграции нормалей пользователь запретил дальнейшие запуски
+тестов и визуальные проверки. **Итоговый Step 4 не проверен запуском тестов или в браузере.**
+Проверки типов, lint и production build проходят; это не подтверждение прохождения тестов.
 
-Добавлены `materials.test.ts`, `capsuleDamage.test.ts`, `penetration.test.ts`,
-`penetrationIntegration.test.ts`; прежние тесты адаптированы к явному результату impact.
+Для Step 4 добавлены `surfaceNormal.test.ts`, `impactGeometry.test.ts`, `ricochet.test.ts`,
+`ricochetIntegration.test.ts`: нормали, углы, отражение, энергия, материалы, лимиты,
+продолжение полёта, сохранение профиля при выстреле и прогноз после рикошета.
+Сценарии Step 3 сохранены; fixture пробития явно отключает рикошет.
 Четыре неизменяемых snapshot сняты с исходного MVP до миграции: они проверяют все точки
 preview, время полёта, контакт, энергию, кратер, число удалённых ячеек и checksum грунта.
 Остальные тесты проверяют forces, lifecycle, cooldown, ID, очереди, snapshot параметров,
@@ -220,12 +254,12 @@ TypeScript ограничен совместимой веткой 6.0 из-за 
 | `game/core/GameSnapshot.ts`                 | Сериализация состояния; restore/протокол пока отсутствуют   |
 | `game/weapons/weaponDefinitions.ts`         | Три оружия, параметры запуска                               |
 | `game/ballistics/projectileDefinitions.ts`  | Физические параметры новых снарядов                         |
-| `game/impacts/ImpactDefinition.ts`          | Независимые кратеры/каналы, будущие ricochet-параметры      |
-| `game/impacts/ImpactResolution.ts`          | Будущая третья ветка ricochet                               |
+| `game/impacts/ImpactDefinition.ts`          | Независимые кратеры, каналы и сколы                         |
+| `game/impacts/ImpactResolution.ts`          | Union трёх исходов; будущие типы последствий                |
 | `game/impacts/resolvePenetration.ts`        | Сопротивления и traversal                                   |
 | `game/terrain/TerrainMaterialDefinition.ts` | Новые игровые материалы                                     |
 | `game/impacts/resolveImpact.ts`             | Разрешение попадания и новые типы последствий               |
-| `game/terrain/terrainCollision.ts`          | Optional normal; вычисление нормалей для ricochet           |
+| `game/terrain/terrainCollision.ts`          | Геометрические факты контакта, normal и contactPoint        |
 | `game/terrain/damageTerrain.ts`             | Другие semantic damage operations                           |
 | `game/terrain/TerrainGrid.ts`               | Chunking, dirty regions, журнал операций                    |
 | `game/rendering/SceneRenderer.ts`           | Дополнительные слои, эффекты, отображение новых сущностей   |
@@ -251,11 +285,14 @@ TypeScript ограничен совместимой веткой 6.0 из-за 
   используется материал центра, а если центр в Air — первая касающаяся ячейка.
 - Остаточная энергия при STOPPED — неизрасходованный бюджет traversal; остановленный
   снаряд удаляется, его скорость нулевая. Прогноз заканчивается до пробития.
-- Ricochet не реализован; `normal` / `surfaceNormal` пока optional. Step 4 может расширить
-  `ImpactResolution` и lifecycle третьей веткой без изменения интегратора и penetration resolver.
+- Нормаль сглажена сеточным ядром и приблизительна на углах, тонких выступах и краях карты.
+  Рикошет ограничен профилем снаряда (UI: до 8); прогноз показывает только первый.
+  Остаток fixed tick после контакта не доинтегрируется; полёт продолжается на следующем тике.
+- На очень крупной сетке скол может не затронуть центр ни одной ячейки. Это ограничение
+  растеризации circle damage; параметры скола не расширяются до полного кратера.
 
-Полный перечень изменений и решений: [отчёт Step 3](STEP3_REPORT.md).
-История предыдущего этапа: [отчёт Step 2](STEP2_REPORT.md).
+Полный перечень изменений и решений: [отчёт Step 4](STEP4_REPORT.md).
+История: [отчёт Step 3](STEP3_REPORT.md), [отчёт Step 2](STEP2_REPORT.md).
 
 API интеграции: [официальная документация @pixi/react](https://github.com/pixijs/pixi-react),
 [текстуры PixiJS](https://pixijs.com/8.x/guides/components/textures).

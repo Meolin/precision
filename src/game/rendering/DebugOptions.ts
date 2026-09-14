@@ -5,6 +5,7 @@ export interface DebugOptions {
   grid: boolean;
   samples: boolean;
   penetration: boolean;
+  surfaceNormals: boolean;
 }
 export const defaultDebugOptions: DebugOptions = {
   trajectory: true,
@@ -13,4 +14,5 @@ export const defaultDebugOptions: DebugOptions = {
   grid: false,
   samples: false,
   penetration: false,
+  surfaceNormals: false,
 };

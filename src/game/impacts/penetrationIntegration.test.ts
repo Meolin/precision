@@ -19,6 +19,8 @@ import { resolveImpact } from './resolveImpact';
 function scene(material: Material = Material.Soil, end = 4) {
   const config = cloneConfig();
   config.physics = { gravity: 0, windAcceleration: 0, airDrag: 0 };
+  // Preserve the Step 3 traversal fixture independently of Step 4 bounce defaults.
+  config.weaponOverrides.heavyPenetrator = { ricochet: { enabled: false } };
   const state = createGameState(config, 12345);
   state.terrain = new TerrainGrid(100, 40, 0.2);
   for (let col = 15; col < end / 0.2; col++)
@@ -94,13 +96,14 @@ describe('penetration lifecycle and semantic damage', () => {
     expect(state.terrain.getMaterialAtWorldPosition({ x: 3.5, y: 6.1 })).toBe(Material.Soil);
     const exit = { ...shell.position };
     const speed = shell.velocity.x;
+    const lifetimeAtExit = shell.lifetimeSeconds;
     config.physics.gravity = 10;
     stepSimulation(state, config, 0.01);
     expect(state.events).toEqual([]);
     expect(state.projectiles).toHaveLength(1);
     expect(shell.position.x).toBeCloseTo(exit.x + speed * 0.01);
     expect(shell.velocity.y).toBeCloseTo(0.1);
-    expect(shell.lifetimeSeconds).toBeCloseTo(0.03);
+    expect(shell.lifetimeSeconds).toBeCloseTo(lifetimeAtExit + 0.01);
     expect(state.lastImpact?.penetrationStatus).toBe('success');
     expect(state.lastImpact).not.toHaveProperty('traversedSegments');
   });

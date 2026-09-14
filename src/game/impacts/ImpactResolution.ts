@@ -4,15 +4,39 @@ import type { TerrainMaterialId } from '../terrain/TerrainMaterialId';
 import type { PenetrationResult } from './PenetrationResult';
 import type { ActivePenetrationState } from './PenetrationResult';
 
-export interface ImpactResolution {
+interface ImpactResolutionBase {
   materialId: TerrainMaterialId;
   terrainDamageEvents: TerrainDamageEvent[];
   penetration?: PenetrationResult;
   activePenetration?: ActivePenetrationState;
-  type: 'stop' | 'penetrate';
   continuePenetration: boolean;
   finalPosition: Vec2;
   remainingVelocity: Vec2;
   remainingEnergyJ: number;
   penetrationDistanceMeters: number;
+  impactAngleRad: number;
+  surfaceNormal: Vec2;
+  initialEnergyJ: number;
 }
+
+export interface StopImpactResolution extends ImpactResolutionBase {
+  type: 'stop';
+  continuePenetration: false;
+}
+
+export interface PenetrationImpactResolution extends ImpactResolutionBase {
+  type: 'penetrate';
+  continuePenetration: true;
+  activePenetration: ActivePenetrationState;
+}
+
+export interface RicochetImpactResolution extends ImpactResolutionBase {
+  type: 'ricochet';
+  continuePenetration: false;
+  energyLostJ: number;
+  energyRetention: number;
+  ricochetCount: number;
+}
+
+export type ImpactResolution =
+  StopImpactResolution | PenetrationImpactResolution | RicochetImpactResolution;

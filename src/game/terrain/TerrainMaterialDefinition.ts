@@ -6,6 +6,8 @@ export interface TerrainMaterialDefinition {
   readonly name: string;
   readonly density: number;
   readonly hardness: number;
+  /** 0 disables ricochet; 1 uses the projectile's angle threshold unchanged. */
+  readonly ricochetFactor: number;
   /** Energy cost in J/m before the projectile's penetrationPower modifier. */
   readonly penetrationResistance: number;
   /** Reserved for later blast tuning; Step 3 preserves the original crater law. */
@@ -20,6 +22,7 @@ export const terrainMaterialDefinitions: Readonly<
     name: 'Air',
     density: 0,
     hardness: 0,
+    ricochetFactor: 0,
     penetrationResistance: 0,
     blastResistance: 0,
   }),
@@ -28,6 +31,7 @@ export const terrainMaterialDefinitions: Readonly<
     name: 'Soil',
     density: 1,
     hardness: 1,
+    ricochetFactor: 0,
     penetrationResistance: 1500,
     blastResistance: 1,
   }),
@@ -36,6 +40,7 @@ export const terrainMaterialDefinitions: Readonly<
     name: 'Rock',
     density: 3,
     hardness: 8,
+    ricochetFactor: 1,
     penetrationResistance: 12000,
     blastResistance: 4,
   }),

@@ -25,6 +25,7 @@ interface Props {
   paused: boolean;
   onSetting: (setting: NumericSetting, value: number) => void;
   onWeaponSetting: (id: WeaponId, setting: WeaponNumericSetting, value: number) => void;
+  onRicochetEnabled: (id: WeaponId, enabled: boolean) => void;
   onDebug: (key: keyof DebugOptions, value: boolean) => void;
   onPause: () => void;
   onStep: () => void;
@@ -99,6 +100,7 @@ const debugLabels: { key: keyof DebugOptions; label: string }[] = [
   { key: 'grid', label: 'Сетка рельефа' },
   { key: 'samples', label: 'Точки проверки столкновений' },
   { key: 'penetration', label: 'Путь пробития' },
+  { key: 'surfaceNormals', label: 'Нормали поверхности' },
 ];
 
 export function TechnicalPanel({
@@ -108,6 +110,7 @@ export function TechnicalPanel({
   paused,
   onSetting,
   onWeaponSetting,
+  onRicochetEnabled,
   onDebug,
   onPause,
   onStep,
@@ -176,7 +179,7 @@ export function TechnicalPanel({
           )}
           <p className="settings-note">{data.projectileName} · параметры следующего выстрела</p>
           {weaponNumericSettings
-            .filter((setting) => setting.section !== 'impact')
+            .filter((setting) => setting.section === 'weapon' || setting.section === 'projectile')
             .map((setting) => (
               <NumericControl
                 key={`${data.weaponId}-${setting.section}-${setting.key}`}
@@ -239,10 +242,41 @@ export function TechnicalPanel({
             </div>
           </dl>
           <p className="settings-note">
-            Профиль {data.weaponName}. Прогноз заканчивается у первого касания рельефа.
+            Профиль {data.weaponName}. Прогноз заканчивается перед пробитием или вторым контактом.
           </p>
           <p className="settings-note">
             Минимальный радиус канала учитывает размер снаряда и ячейки.
+          </p>
+        </section>
+        <section className="settings-group" aria-label="Параметры рикошета">
+          <h3>
+            <span>Рикошет</span>
+            <span>RICOCHET</span>
+          </h3>
+          <label className="check-row">
+            <input
+              type="checkbox"
+              checked={data.ricochet.enabled}
+              onChange={(event) => onRicochetEnabled(data.weaponId, event.target.checked)}
+            />
+            <span>Разрешить рикошет</span>
+          </label>
+          {weaponNumericSettings
+            .filter((setting) => setting.section === 'ricochet')
+            .map((setting) => (
+              <NumericControl
+                key={`${data.weaponId}-${setting.key}`}
+                setting={setting}
+                value={weaponSettingValue(config, data.weaponId, setting)}
+                onChange={(value) => onWeaponSetting(data.weaponId, setting, value)}
+              />
+            ))}
+          <p className="settings-note">
+            0° — лобовое попадание, 90° — касательное. Rock допускает рикошет, Soil — нет.
+          </p>
+          <p className="settings-note">
+            Настройки применяются к следующему выстрелу. Прогноз показывает один рикошет голубой
+            точкой.
           </p>
         </section>
         <section className="settings-group" aria-label="Материал под курсором">
@@ -266,6 +300,10 @@ export function TechnicalPanel({
             <div>
               <dt>Твёрдость</dt>
               <dd>{formatNumber(data.cursorMaterial?.hardness ?? null, 1)}</dd>
+            </div>
+            <div>
+              <dt>Коэффициент рикошета</dt>
+              <dd>{formatNumber(data.cursorMaterial?.ricochetFactor ?? null, 2)}</dd>
             </div>
           </dl>
           <p className="settings-note">

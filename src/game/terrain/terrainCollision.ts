@@ -1,10 +1,13 @@
 import { clamp, lerp, type Vec2 } from '../math/Vec2';
 import type { TerrainGrid } from './TerrainGrid';
+import { calculateSurfaceNormal } from './surfaceNormal';
 
 export interface TerrainHit {
   position: Vec2;
   fraction: number;
-  normal?: Vec2;
+  normal: Vec2;
+  /** Actual cell contact, distinct from the projectile center in position. */
+  contactPoint: Vec2;
 }
 
 /** Circle vs occupied cell rectangles, including projectile radius. */
@@ -55,7 +58,23 @@ export function sweepTerrain(
       if (circleTouchesTerrain(terrain, lerp(from, to, middle), radius)) upper = middle;
       else lower = middle;
     }
-    return { position: lerp(from, to, upper), fraction: upper };
+    const center = lerp(from, to, upper);
+    const cell = findTerrainContactCell(terrain, center, radius)!;
+    const size = terrain.cellSizeMeters;
+    const contactPoint = {
+      x: clamp(center.x, cell.x * size, (cell.x + 1) * size),
+      y: clamp(center.y, cell.y * size, (cell.y + 1) * size),
+    };
+    return {
+      position: center,
+      fraction: upper,
+      contactPoint,
+      normal: calculateSurfaceNormal(
+        terrain,
+        { x: (cell.x + 0.5) * size, y: (cell.y + 0.5) * size },
+        { x: to.x - from.x, y: to.y - from.y },
+      ),
+    };
   }
   return null;
 }

@@ -11,6 +11,7 @@ import { advanceActivePenetration } from '../impacts/resolvePenetration';
 import { penetrationChannelRadius } from '../impacts/resolveImpact';
 import type { TerrainDamageEvent } from '../terrain/TerrainDamageEvent';
 import type { GameState } from './GameState';
+import { applyRicochetContinuation } from '../impacts/ricochetContinuation';
 
 export function stepSimulation(
   state: GameState,
@@ -127,7 +128,9 @@ export function stepSimulation(
       removedCells += applyTerrainDamage(state.terrain, damage);
       if (damage.operation.type === 'circle') craterRadiusMeters = damage.operation.radiusMeters;
     }
-    if (resolution.continuePenetration && resolution.activePenetration) {
+    if (resolution.type === 'ricochet') {
+      applyRicochetContinuation(projectile, resolution, config);
+    } else if (resolution.continuePenetration && resolution.activePenetration) {
       const insideWorld =
         resolution.finalPosition.x >= -projectile.radius &&
         resolution.finalPosition.x <= config.world.widthMeters + projectile.radius &&
@@ -154,17 +157,25 @@ export function stepSimulation(
     const penetration = resolution.penetration;
     state.lastImpact = {
       ...impact,
+      result: resolution.type,
+      impactAngleRad: resolution.impactAngleRad,
+      ricochetCount: projectile.ricochetCount,
+      maxRicochets: projectile.ricochet.maxRicochets,
+      energyRetention: resolution.type === 'ricochet' ? resolution.energyRetention : 0,
       craterRadiusMeters,
       removedCells,
       materialId: resolution.materialId,
-      penetrationStatus: resolution.continuePenetration
-        ? 'penetrating'
-        : projectile.penetration?.enabled || penetration
-          ? 'stopped'
-          : 'disabled',
+      penetrationStatus:
+        resolution.type === 'ricochet'
+          ? 'notAttempted'
+          : resolution.continuePenetration
+            ? 'penetrating'
+            : projectile.penetration?.enabled || penetration
+              ? 'stopped'
+              : 'disabled',
       penetrationDistanceMeters: penetration?.penetrationDistanceMeters ?? 0,
-      energyLostJ: impact.kineticEnergyJ - (penetration?.remainingEnergyJ ?? 0),
-      remainingEnergyJ: penetration?.remainingEnergyJ ?? 0,
+      energyLostJ: Math.max(0, impact.kineticEnergyJ - resolution.remainingEnergyJ),
+      remainingEnergyJ: resolution.remainingEnergyJ,
       exitSpeed: resolution.continuePenetration
         ? 0
         : Math.hypot(resolution.remainingVelocity.x, resolution.remainingVelocity.y),

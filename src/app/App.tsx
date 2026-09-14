@@ -3,7 +3,11 @@ import type { NumericSetting } from '../game/config/GameConfig';
 import { withSetting } from '../game/config/defaultGameConfig';
 import type { GameRuntime } from '../game/core/GameRuntime';
 import type { WeaponId } from '../game/weapons/WeaponDefinition';
-import { withWeaponSetting, type WeaponNumericSetting } from '../game/weapons/WeaponSettings';
+import {
+  withWeaponSetting,
+  withRicochetEnabled,
+  type WeaponNumericSetting,
+} from '../game/weapons/WeaponSettings';
 import { defaultDebugOptions, type DebugOptions } from '../game/rendering/DebugOptions';
 import { GameCanvas } from '../game/rendering/GameCanvas';
 import { FlightTelemetry, HUD, SceneStatus } from '../ui/HUD/HUD';
@@ -45,7 +49,7 @@ export function App({ runtime }: { runtime: GameRuntime }) {
             BALLISTICS<span className="brand-divider">/</span>
             <b>LAB</b>
           </span>
-          <span className="version-badge">STEP 3</span>
+          <span className="version-badge">STEP 4</span>
         </div>
         <span className="header-note">
           <span className="status-dot" />
@@ -160,6 +164,9 @@ export function App({ runtime }: { runtime: GameRuntime }) {
           paused={paused}
           onSetting={updateSetting}
           onWeaponSetting={updateWeaponSetting}
+          onRicochetEnabled={(id, enabled) =>
+            setConfig(runtime.updateConfig(withRicochetEnabled(runtime.getConfig(), id, enabled)))
+          }
           onDebug={updateDebug}
           onPause={togglePause}
           onStep={() => runtime.step()}

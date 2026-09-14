@@ -4,6 +4,12 @@ export const impactDefinitions: Readonly<Record<ImpactDefinitionId, ImpactDefini
   Object.freeze({
     basicImpact: Object.freeze({
       id: 'basicImpact',
+      ricochetDamage: Object.freeze({
+        enabled: true,
+        baseRadiusMeters: 0.16,
+        energyScale: 0.001,
+        maxRadiusMeters: 0.3,
+      }),
       terrainDamage: Object.freeze({
         enabled: true,
         baseRadiusMeters: 0.8,
@@ -13,6 +19,12 @@ export const impactDefinitions: Readonly<Record<ImpactDefinitionId, ImpactDefini
     }),
     mortarImpact: Object.freeze({
       id: 'mortarImpact',
+      ricochetDamage: Object.freeze({
+        enabled: true,
+        baseRadiusMeters: 0.16,
+        energyScale: 0.001,
+        maxRadiusMeters: 0.3,
+      }),
       terrainDamage: Object.freeze({
         enabled: true,
         baseRadiusMeters: 1.1,
@@ -22,6 +34,12 @@ export const impactDefinitions: Readonly<Record<ImpactDefinitionId, ImpactDefini
     }),
     penetratorImpact: Object.freeze({
       id: 'penetratorImpact',
+      ricochetDamage: Object.freeze({
+        enabled: true,
+        baseRadiusMeters: 0.16,
+        energyScale: 0.001,
+        maxRadiusMeters: 0.25,
+      }),
       terrainDamage: Object.freeze({
         enabled: true,
         baseRadiusMeters: 0.35,

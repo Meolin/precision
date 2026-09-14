@@ -10,4 +10,6 @@ export interface ImpactDefinition {
     maxRadiusMeters: number;
   }>;
   readonly penetrationDamage?: Readonly<{ channelRadiusScale: number }>;
+  /** Small surface chip, independent of the stop crater and penetration channel. */
+  readonly ricochetDamage?: ImpactDefinition['terrainDamage'];
 }
