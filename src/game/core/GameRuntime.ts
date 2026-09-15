@@ -9,8 +9,9 @@ import { SimulationClock } from './SimulationClock';
 import { stepSimulation } from './stepSimulation';
 import type { PenetrationResult } from '../impacts/PenetrationResult';
 import type { PenetrationSegment } from '../impacts/PenetrationResult';
-import type { EntityImpactEvent } from '../combat/EntityImpactEvent';
 import { createDamagePopup, type DamagePopup } from '../effects/DamagePopup';
+import { hitboxCenter } from '../entities/Hitbox';
+import type { ExplosionResolvedEvent } from '../explosions/resolveExplosion';
 
 export class GameRuntime {
   private state: GameState;
@@ -27,6 +28,7 @@ export class GameRuntime {
   private cursorPosition: Vec2 | null = null;
   private damagePopups: DamagePopup[] = [];
   private presentationSeconds = 0;
+  private lastExplosion: ExplosionResolvedEvent | null = null;
 
   constructor(config: GameConfig = defaultGameConfig, seed = 12345) {
     this.config = validateConfig(config);
@@ -38,6 +40,9 @@ export class GameRuntime {
   }
   getDamagePopups(): readonly DamagePopup[] {
     return this.damagePopups;
+  }
+  getLastExplosion(): Readonly<ExplosionResolvedEvent> | null {
+    return this.lastExplosion;
   }
   /** Fractional simulation time for effects, frozen on pause and cleared on reset. */
   get presentationTimeSeconds(): number {
@@ -89,6 +94,8 @@ export class GameRuntime {
     );
     this.presentationSeconds = Math.max(this.presentationSeconds, this.state.elapsedSeconds);
     this.captureDamagePopups();
+    for (const event of this.state.events)
+      if (event.type === 'explosionResolved') this.lastExplosion = event;
     if (!this.recordPenetrationPaths) this.penetrationPath = null;
     else {
       for (const event of this.state.events)
@@ -131,16 +138,25 @@ export class GameRuntime {
       (popup) => popup.expiresAtSeconds > this.presentationSeconds,
     );
     // Capture every tick before the transient event queue is cleared by the next tick.
-    const impacts = new Map<number, EntityImpactEvent>();
     for (const event of this.state.events) {
-      if (event.type === 'entityImpact') impacts.set(event.projectileId, event);
-      else if (event.type === 'entityDamage' && event.projectileId !== undefined) {
-        const impact = impacts.get(event.projectileId);
-        if (impact && impact.targetEntityId === event.targetEntityId)
-          this.damagePopups.push(
-            createDamagePopup(impact, event, this.state.elapsedSeconds, this.config.damagePopup),
-          );
-      }
+      if (event.type !== 'entityDamage' || !Number.isFinite(event.damage) || event.damage < 0)
+        continue;
+      const target = this.state.units.find((unit) => unit.id === event.targetEntityId);
+      const position =
+        event.position ?? (target ? hitboxCenter(target.position, target.hitbox) : null);
+      if (!position) continue;
+      this.damagePopups.push(
+        createDamagePopup(
+          {
+            position,
+            velocity: event.velocity ?? { x: 0, y: -1 },
+            kineticEnergyJ: event.kineticEnergyJ,
+          },
+          event,
+          this.state.elapsedSeconds,
+          this.config.damagePopup,
+        ),
+      );
     }
   }
 
@@ -174,6 +190,7 @@ export class GameRuntime {
     this.penetrationPath = null;
     this.cursorPosition = null;
     this.damagePopups = [];
+    this.lastExplosion = null;
     this.presentationSeconds = 0;
     this.clock.reset();
     this.preview = null;

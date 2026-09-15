@@ -51,6 +51,7 @@ export function simulateTrajectoryPreview(
         resolveImpactDefinition(
           projectile.impactDefinitionId,
           config.weaponOverrides[projectile.weaponId]?.impact,
+          config.weaponOverrides[projectile.weaponId]?.explosion,
         ),
         projectile,
         previewTerrain,

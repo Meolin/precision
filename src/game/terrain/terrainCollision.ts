@@ -1,6 +1,7 @@
 import { clamp, lerp, type Vec2 } from '../math/Vec2';
 import type { TerrainGrid } from './TerrainGrid';
 import { calculateSurfaceNormal } from './surfaceNormal';
+import { sampleTerrainSegment } from './sampleTerrainSegment';
 
 export interface TerrainHit {
   position: Vec2;
@@ -44,14 +45,14 @@ export function sweepTerrain(
   radius: number,
   debugSamples?: Vec2[],
 ): TerrainHit | null {
-  const distance = Math.hypot(to.x - from.x, to.y - from.y);
-  const steps = Math.max(1, Math.ceil(distance / (terrain.cellSizeMeters * 0.5)));
-  for (let i = 0; i <= steps; i++) {
-    const fraction = i / steps;
-    const position = lerp(from, to, fraction);
+  for (const { position, fraction, previousFraction } of sampleTerrainSegment(
+    from,
+    to,
+    terrain.cellSizeMeters,
+  )) {
     if (debugSamples && debugSamples.length < 512) debugSamples.push(position);
     if (!circleTouchesTerrain(terrain, position, radius)) continue;
-    let lower = Math.max(0, (i - 1) / steps);
+    let lower = previousFraction;
     let upper = fraction;
     for (let iteration = 0; iteration < 8; iteration++) {
       const middle = (lower + upper) / 2;

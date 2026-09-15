@@ -27,7 +27,7 @@ export interface DamagePopup {
 }
 
 export function createDamagePopup(
-  impact: EntityImpactEvent,
+  impact: Pick<EntityImpactEvent, 'position' | 'velocity' | 'kineticEnergyJ'>,
   damage: EntityDamageEvent,
   createdAtSeconds: number,
   config: GameConfig['damagePopup'],

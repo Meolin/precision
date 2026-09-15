@@ -52,6 +52,18 @@ export function resolveImpact(
     surfaceNormal: { ...context.surfaceNormal },
     initialEnergyJ: event.kineticEnergyJ,
   };
+  // Impact-fused explosives detonate once. Their resolver owns all crater damage.
+  if (definition.explosion)
+    return {
+      ...facts,
+      type: 'stop',
+      continuePenetration: false,
+      terrainDamageEvents: [],
+      finalPosition: { ...event.position },
+      remainingVelocity: { x: 0, y: 0 },
+      remainingEnergyJ: 0,
+      penetrationDistanceMeters: 0,
+    };
   const ricochet = resolveRicochet(
     context,
     projectile.ricochet,

@@ -17,6 +17,8 @@ import { resolveEntityDamage } from '../combat/resolveEntityDamage';
 import { applyEntityDamage } from '../combat/applyEntityDamage';
 import { updateUnitMovement } from '../movement/updateUnitMovement';
 import { refreshUnitGrounding } from '../movement/terrainGrounding';
+import { createExplosionEvent, type ExplosionEvent } from '../explosions/ExplosionEvent';
+import { resolveExplosion } from '../explosions/resolveExplosion';
 
 export function stepSimulation(
   state: GameState,
@@ -120,11 +122,21 @@ export function stepSimulation(
     if (!hit) continue;
     if (hit.type === 'entity') {
       const impact = createEntityImpactEvent(projectile, hit, state.tick);
-      const definition = resolveImpactDefinition(projectile.impactDefinitionId).entityDamage;
-      const damage = resolveEntityDamage(impact, definition);
+      const definition = resolveImpactDefinition(
+        projectile.impactDefinitionId,
+        config.weaponOverrides[projectile.weaponId]?.impact,
+        config.weaponOverrides[projectile.weaponId]?.explosion,
+      );
+      const damage = resolveEntityDamage(impact, definition.entityDamage);
       state.events.push(impact, damage);
       const health = applyEntityDamage(state.units, damage);
       if (health) state.lastEntityImpact = { ...impact, ...health, damage: damage.damage };
+      // Direct health changes precede the blast query; already-dead units are skipped.
+      if (definition.explosion)
+        applyExplosion(
+          state,
+          createExplosionEvent(impact, definition.explosion, projectile.ownerEntityId),
+        );
       projectile.position = { ...hit.position };
       projectile.velocity = { x: 0, y: 0 };
       projectile.alive = false;
@@ -137,6 +149,7 @@ export function stepSimulation(
     const definition = resolveImpactDefinition(
       impact.impactDefinitionId,
       config.weaponOverrides[impact.weaponId]?.impact,
+      config.weaponOverrides[impact.weaponId]?.explosion,
     );
     const resolution = resolveImpact(impact, definition, projectile, state.terrain);
     state.events.push({
@@ -148,6 +161,15 @@ export function stepSimulation(
     // Preserve MVP order: later shells in this tick see earlier craters.
     let removedCells = 0;
     let craterRadiusMeters = 0;
+    if (definition.explosion) {
+      const explosion = createExplosionEvent(
+        impact,
+        definition.explosion,
+        projectile.ownerEntityId,
+      );
+      removedCells = applyExplosion(state, explosion);
+      craterRadiusMeters = explosion.terrainDamageRadiusMeters;
+    }
     for (const damage of resolution.terrainDamageEvents) {
       state.events.push(damage);
       removedCells += applyTerrainDamage(state.terrain, damage);
@@ -191,7 +213,7 @@ export function stepSimulation(
       removedCells,
       materialId: resolution.materialId,
       penetrationStatus:
-        resolution.type === 'ricochet'
+        resolution.type === 'ricochet' || definition.explosion
           ? 'notAttempted'
           : resolution.continuePenetration
             ? 'penetrating'
@@ -213,4 +235,34 @@ export function stepSimulation(
     state.cannon.surfaceY = state.cannon.position.y + state.cannon.hitbox.radiusMeters;
   state.tick++;
   state.elapsedSeconds += dt;
+}
+
+/** Health before crater. Subsequent projectiles in this tick see these changes. */
+function applyExplosion(state: GameState, event: ExplosionEvent): number {
+  state.events.push(event);
+  const resolution = resolveExplosion(event, state.units, state.terrain);
+  let entitiesDamaged = 0;
+  let maxDealt = 0;
+  for (const damage of resolution.entityDamageEvents) {
+    state.events.push(damage);
+    const health = applyEntityDamage(state.units, damage);
+    if (health && health.healthAfter < health.healthBefore) {
+      entitiesDamaged++;
+      maxDealt = Math.max(maxDealt, health.healthBefore - health.healthAfter);
+    }
+  }
+  let removedCells = 0;
+  if (resolution.terrainDamageEvent) {
+    state.events.push(resolution.terrainDamageEvent);
+    removedCells = applyTerrainDamage(state.terrain, resolution.terrainDamageEvent);
+  }
+  state.events.push({
+    type: 'explosionResolved',
+    tick: event.tick,
+    resolution,
+    entitiesDamaged,
+    maxDealt,
+    removedCells,
+  });
+  return removedCells;
 }

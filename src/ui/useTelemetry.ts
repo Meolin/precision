@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { calculateKineticEnergy } from '../game/ballistics/projectilePhysics';
 import type { GameRuntime } from '../game/core/GameRuntime';
 import { toDegrees } from '../game/math/Vec2';
-import { resolveWeapon } from '../game/weapons/WeaponSettings';
+import { explosionSettingValues, resolveWeapon } from '../game/weapons/WeaponSettings';
 import { weaponDefinitions } from '../game/weapons/weaponDefinitions';
 import { projectileDefinitions } from '../game/ballistics/projectileDefinitions';
 import { terrainMaterialDefinitions } from '../game/terrain/TerrainMaterialDefinition';
@@ -20,6 +20,9 @@ function readTelemetry(runtime: GameRuntime) {
     ? terrainMaterialDefinitions[state.terrain.getMaterialAtWorldPosition(cursor)]
     : null;
   return {
+    explosionEnabled: Boolean(impact.explosion),
+    explosionSettings: explosionSettingValues(config, cannon.weaponId),
+    lastExplosion: runtime.getLastExplosion(),
     units: state.units.map(cloneUnit),
     activeUnits: state.units.filter((unit) => unit.alive).length,
     shooterAlive: state.cannon.alive,

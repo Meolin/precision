@@ -125,6 +125,35 @@ export class SceneRenderer {
 
     this.projectiles.clear();
     this.debug.clear();
+    const lastExplosion = runtime.getLastExplosion();
+    if (lastExplosion) {
+      const { explosion, affectedEntities } = lastExplosion.resolution;
+      const { x, y } = explosion.position;
+      if (options.explosionRadius) {
+        this.debug
+          .circle(x, y, explosion.radiusMeters)
+          .stroke({ color: colors.orange, width: 1.5 * pixel, alpha: 0.8 });
+        this.debug
+          .circle(x, y, explosion.innerRadiusMeters)
+          .stroke({ color: colors.accent, width: pixel, alpha: 0.8 });
+        this.debug
+          .circle(x, y, explosion.terrainDamageRadiusMeters)
+          .stroke({ color: colors.metal, width: pixel, alpha: 0.5 });
+        this.debug.circle(x, y, 3 * pixel).fill(colors.orange);
+      }
+      if (options.explosionOcclusion) {
+        for (const target of affectedEntities) {
+          const color = target.occluded ? 0xed85ac : 0x85d7a2;
+          this.debug
+            .moveTo(x, y)
+            .lineTo(target.targetPosition.x, target.targetPosition.y)
+            .stroke({ color, width: 1.5 * pixel, alpha: 0.85 });
+          this.debug
+            .circle(target.targetPosition.x, target.targetPosition.y, 3 * pixel)
+            .fill(color);
+        }
+      }
+    }
     this.units.clear();
     const movementTarget = state.cannon.movement?.targetX;
     if (options.movementTarget && state.cannon.alive && movementTarget != null) {

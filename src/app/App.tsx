@@ -6,6 +6,7 @@ import type { WeaponId } from '../game/weapons/WeaponDefinition';
 import {
   withWeaponSetting,
   withRicochetEnabled,
+  withExplosionToggle,
   type WeaponNumericSetting,
 } from '../game/weapons/WeaponSettings';
 import { defaultDebugOptions, type DebugOptions } from '../game/rendering/DebugOptions';
@@ -49,7 +50,7 @@ export function App({ runtime }: { runtime: GameRuntime }) {
             BALLISTICS<span className="brand-divider">/</span>
             <b>LAB</b>
           </span>
-          <span className="version-badge">STEP 5</span>
+          <span className="version-badge">STEP 6</span>
         </div>
         <span className="header-note">
           <span className="status-dot" />
@@ -172,6 +173,11 @@ export function App({ runtime }: { runtime: GameRuntime }) {
           onWeaponSetting={updateWeaponSetting}
           onRicochetEnabled={(id, enabled) =>
             setConfig(runtime.updateConfig(withRicochetEnabled(runtime.getConfig(), id, enabled)))
+          }
+          onExplosionToggle={(id, key, value) =>
+            setConfig(
+              runtime.updateConfig(withExplosionToggle(runtime.getConfig(), id, key, value)),
+            )
           }
           onDebug={updateDebug}
           onPause={togglePause}

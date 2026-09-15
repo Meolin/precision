@@ -10,7 +10,12 @@
     "src/game/terrain",
     "src/game/ballistics",
     "src/game/weapons",
-    "src/game/impacts"
+    "src/game/impacts",
+    "src/game/explosions",
+    "src/game/collision",
+    "src/game/combat",
+    "src/game/movement",
+    "src/game/effects"
   ],
   "exclude": ["**/*.test.ts"]
 }

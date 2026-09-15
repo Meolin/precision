@@ -13,6 +13,8 @@ import type { EntityImpactEvent } from '../combat/EntityImpactEvent';
 import type { EntityDamageEvent } from '../combat/EntityDamageEvent';
 import type { HealthChange } from '../combat/applyEntityDamage';
 import { refreshUnitGrounding } from '../movement/terrainGrounding';
+import type { ExplosionEvent } from '../explosions/ExplosionEvent';
+import type { ExplosionResolvedEvent } from '../explosions/resolveExplosion';
 
 export interface LastEntityImpact extends EntityImpactEvent, HealthChange {
   damage: number;
@@ -35,6 +37,8 @@ export interface LastImpact extends ImpactEvent {
   exitSpeed: number;
 }
 export type SimulationEvent =
+  | ExplosionEvent
+  | ExplosionResolvedEvent
   | EntityImpactEvent
   | EntityDamageEvent
   | ImpactEvent

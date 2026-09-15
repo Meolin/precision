@@ -76,10 +76,11 @@ describe('damage resolver and health', () => {
 
 describe('entity combat integration', () => {
   it.each(['basicCannon', 'mortar', 'heavyPenetrator'] as const)(
-    '%s direct hits stop and never damage terrain',
+    '%s direct hits with explosions disabled stop and never damage terrain',
     (weaponId) => {
       const { config, state, target } = scene();
       state.cannon.weaponId = weaponId;
+      config.weaponOverrides[weaponId] = { explosion: { enabled: false } };
       const shell = createProjectile(state.cannon, config, state.nextEntityId++, 0);
       shell.position = { x: 0, y: 10 };
       shell.velocity = { x: 1200, y: 0 };

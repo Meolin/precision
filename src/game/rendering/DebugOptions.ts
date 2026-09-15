@@ -8,6 +8,8 @@ export interface DebugOptions {
   surfaceNormals: boolean;
   entityHitboxes: boolean;
   movementTarget: boolean;
+  explosionRadius: boolean;
+  explosionOcclusion: boolean;
 }
 export const defaultDebugOptions: DebugOptions = {
   trajectory: true,
@@ -19,4 +21,6 @@ export const defaultDebugOptions: DebugOptions = {
   surfaceNormals: false,
   entityHitboxes: false,
   movementTarget: true,
+  explosionRadius: true,
+  explosionOcclusion: false,
 };

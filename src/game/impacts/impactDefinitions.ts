@@ -1,4 +1,9 @@
 import type { ImpactDefinition, ImpactDefinitionId } from './ImpactDefinition';
+import {
+  defaultExplosionDefinition,
+  resolveExplosionDefinition,
+  type ExplosionOverrides,
+} from '../explosions/ExplosionDefinition';
 
 export const impactDefinitions: Readonly<Record<ImpactDefinitionId, ImpactDefinition>> =
   Object.freeze({
@@ -25,11 +30,12 @@ export const impactDefinitions: Readonly<Record<ImpactDefinitionId, ImpactDefini
     }),
     mortarImpact: Object.freeze({
       id: 'mortarImpact',
+      explosion: defaultExplosionDefinition,
       entityDamage: Object.freeze({
         enabled: true,
-        energyToDamageScale: 0.01,
+        energyToDamageScale: 0.006,
         minDamage: 1,
-        maxDamage: 75,
+        maxDamage: 25,
       }),
       ricochetDamage: Object.freeze({
         enabled: true,
@@ -71,6 +77,7 @@ export const impactDefinitions: Readonly<Record<ImpactDefinitionId, ImpactDefini
 export function resolveImpactDefinition(
   id: ImpactDefinitionId,
   overrides?: Partial<ImpactDefinition['terrainDamage']>,
+  explosionOverrides?: ExplosionOverrides,
 ): ImpactDefinition {
   const defaults = impactDefinitions[id];
   const terrainDamage = { ...defaults.terrainDamage, ...overrides };
@@ -78,5 +85,9 @@ export function resolveImpactDefinition(
     terrainDamage.baseRadiusMeters,
     terrainDamage.maxRadiusMeters,
   );
-  return { ...defaults, terrainDamage };
+  return {
+    ...defaults,
+    terrainDamage,
+    explosion: resolveExplosionDefinition(defaults.explosion, explosionOverrides),
+  };
 }

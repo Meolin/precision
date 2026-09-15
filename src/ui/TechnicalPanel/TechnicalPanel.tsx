@@ -28,6 +28,11 @@ interface Props {
   onDamagePopupCurve: (curve: DamagePopupVelocityCurve) => void;
   onWeaponSetting: (id: WeaponId, setting: WeaponNumericSetting, value: number) => void;
   onRicochetEnabled: (id: WeaponId, enabled: boolean) => void;
+  onExplosionToggle: (
+    id: WeaponId,
+    key: 'enabled' | 'terrainOcclusionEnabled',
+    value: boolean,
+  ) => void;
   onDebug: (key: keyof DebugOptions, value: boolean) => void;
   onPause: () => void;
   onStep: () => void;
@@ -319,6 +324,8 @@ const debugLabels: { key: keyof DebugOptions; label: string }[] = [
   { key: 'surfaceNormals', label: 'Нормали поверхности' },
   { key: 'entityHitboxes', label: 'Хитбоксы юнитов' },
   { key: 'movementTarget', label: 'Цель движения' },
+  { key: 'explosionRadius', label: 'Радиусы последнего взрыва' },
+  { key: 'explosionOcclusion', label: 'Укрытия от взрыва' },
 ];
 
 export function TechnicalPanel({
@@ -330,6 +337,7 @@ export function TechnicalPanel({
   onDamagePopupCurve,
   onWeaponSetting,
   onRicochetEnabled,
+  onExplosionToggle,
   onDebug,
   onPause,
   onStep,
@@ -554,6 +562,139 @@ export function TechnicalPanel({
             </output>
           </div>
         </CollapsibleSettingsGroup>
+        <CollapsibleSettingsGroup title="Взрыв" meta="EXPLOSION" ariaLabel="Параметры взрыва">
+          <label className="check-row">
+            <input
+              type="checkbox"
+              checked={data.explosionEnabled}
+              onChange={(event) =>
+                onExplosionToggle(data.weaponId, 'enabled', event.target.checked)
+              }
+            />
+            <span>Включить взрыв</span>
+          </label>
+          {weaponNumericSettings
+            .filter((setting) => setting.section === 'explosion')
+            .map((setting) => (
+              <NumericControl
+                key={`${data.weaponId}-explosion-${setting.key}`}
+                setting={setting}
+                value={weaponSettingValue(config, data.weaponId, setting)}
+                onChange={(value) => onWeaponSetting(data.weaponId, setting, value)}
+              />
+            ))}
+          <label className="check-row">
+            <input
+              type="checkbox"
+              checked={data.explosionSettings.terrainOcclusionEnabled}
+              onChange={(event) =>
+                onExplosionToggle(data.weaponId, 'terrainOcclusionEnabled', event.target.checked)
+              }
+            />
+            <span>Рельеф ослабляет урон взрыва</span>
+          </label>
+          <p className="settings-note">
+            Применяется к следующим попаданиям этого оружия, включая снаряды в полёте. Прямой урон и
+            урон взрыва складываются. Взрыв может повредить своё орудие.
+          </p>
+          <p className="settings-note">
+            Взрыв срабатывает при первом контакте. Внутренний радиус ограничен внешним, минимальный
+            урон — максимальным.
+          </p>
+        </CollapsibleSettingsGroup>
+        <CollapsibleSettingsGroup
+          title="Последний взрыв"
+          meta="LAST EXPLOSION"
+          ariaLabel="Последний взрыв"
+        >
+          {data.lastExplosion ? (
+            <>
+              <dl className="inspector-values">
+                <div>
+                  <dt>Позиция X / Y</dt>
+                  <dd>
+                    {formatNumber(data.lastExplosion.resolution.explosion.position.x, 2)} /{' '}
+                    {formatNumber(data.lastExplosion.resolution.explosion.position.y, 2)} m
+                  </dd>
+                </div>
+                <div>
+                  <dt>Радиус поражения</dt>
+                  <dd>{formatNumber(data.lastExplosion.resolution.explosion.radiusMeters, 1)} m</dd>
+                </div>
+                <div>
+                  <dt>Целей в радиусе</dt>
+                  <dd>{data.lastExplosion.resolution.affectedEntities.length}</dd>
+                </div>
+                <div>
+                  <dt>Получили урон</dt>
+                  <dd>{data.lastExplosion.entitiesDamaged}</dd>
+                </div>
+                <div>
+                  <dt>За укрытием</dt>
+                  <dd>
+                    {
+                      data.lastExplosion.resolution.affectedEntities.filter(
+                        (target) => target.occluded,
+                      ).length
+                    }
+                  </dd>
+                </div>
+                <div>
+                  <dt>Максимальная потеря HP</dt>
+                  <dd>{formatNumber(data.lastExplosion.maxDealt, 1)}</dd>
+                </div>
+                <div>
+                  <dt>Радиус кратера</dt>
+                  <dd>
+                    {formatNumber(
+                      data.lastExplosion.resolution.explosion.terrainDamageRadiusMeters,
+                      1,
+                    )}{' '}
+                    m
+                  </dd>
+                </div>
+                <div>
+                  <dt>Удалено ячеек</dt>
+                  <dd>{data.lastExplosion.removedCells}</dd>
+                </div>
+              </dl>
+              {data.lastExplosion.resolution.affectedEntities.map((target) => (
+                <details key={target.entityId}>
+                  <summary>
+                    Unit #{target.entityId} · {formatNumber(target.finalDamage, 1)} HP
+                    {target.occluded ? ' · укрытие' : ''}
+                  </summary>
+                  <dl className="inspector-values">
+                    <div>
+                      <dt>До хитбокса</dt>
+                      <dd>{formatNumber(target.distanceMeters, 2)} m</dd>
+                    </div>
+                    <div>
+                      <dt>Урон до укрытия</dt>
+                      <dd>{formatNumber(target.rawDamage, 1)} HP</dd>
+                    </div>
+                    <div>
+                      <dt>Укрытие</dt>
+                      <dd>{target.occluded ? 'Да' : 'Нет'}</dd>
+                    </div>
+                    <div>
+                      <dt>Итоговый урон</dt>
+                      <dd>{formatNumber(target.finalDamage, 1)} HP</dd>
+                    </div>
+                  </dl>
+                </details>
+              ))}
+            </>
+          ) : (
+            <p className="settings-note">
+              Взрывов ещё не было. Выберите Mortar и сделайте выстрел.
+            </p>
+          )}
+          <p className="settings-note">
+            Линии: зелёная — открытый путь, розовая — укрытие. Круги: оранжевый — зона поражения,
+            светло-зелёный — полный урон, серый — кратер. Показаны позиции в момент взрыва.
+          </p>
+        </CollapsibleSettingsGroup>
         <CollapsibleSettingsGroup title="Разрушение рельефа" meta="IMPACT">
           {weaponNumericSettings
             .filter((setting) => setting.section === 'impact')
@@ -565,7 +706,11 @@ export function TechnicalPanel({
                 onChange={(value) => onWeaponSetting(data.weaponId, setting, value)}
               />
             ))}
-          <p className="settings-note">Применяется при попадании снарядов этого оружия.</p>
+          <p className="settings-note">
+            {data.explosionEnabled
+              ? 'Взрыв включён: радиус кратера задаётся в секции «Взрыв».'
+              : 'Применяется при попадании снарядов этого оружия.'}
+          </p>
         </CollapsibleSettingsGroup>
         <CollapsibleSettingsGroup title="Пробитие" meta="PENETRATION">
           <dl className="inspector-values">

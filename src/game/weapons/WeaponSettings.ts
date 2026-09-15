@@ -6,6 +6,11 @@ import { resolveImpactDefinition } from '../impacts/impactDefinitions';
 import { clamp } from '../math/Vec2';
 import type { WeaponDefinition, WeaponId } from './WeaponDefinition';
 import { weaponDefinitions } from './weaponDefinitions';
+import {
+  defaultExplosionDefinition,
+  validateExplosionDefinition,
+  type ExplosionOverrides,
+} from '../explosions/ExplosionDefinition';
 
 export interface WeaponOverrides {
   weapon?: Partial<Pick<WeaponDefinition, 'muzzleVelocity' | 'cooldownSeconds'>>;
@@ -22,6 +27,7 @@ export interface WeaponOverrides {
   >;
   impact?: Partial<Omit<ImpactDefinition['terrainDamage'], 'enabled'>>;
   ricochet?: Partial<ProjectileDefinition['ricochet']>;
+  explosion?: ExplosionOverrides;
 }
 
 export function resolveWeapon(config: Pick<GameConfig, 'weaponOverrides'>, id: WeaponId) {
@@ -38,7 +44,11 @@ export function resolveWeapon(config: Pick<GameConfig, 'weaponOverrides'>, id: W
   return {
     weapon,
     projectile,
-    impact: resolveImpactDefinition(projectile.impactDefinitionId, overrides?.impact),
+    impact: resolveImpactDefinition(
+      projectile.impactDefinitionId,
+      overrides?.impact,
+      overrides?.explosion,
+    ),
   };
 }
 
@@ -46,7 +56,10 @@ type WeaponSection = keyof WeaponOverrides;
 export type WeaponNumericSetting = {
   [Section in WeaponSection]: {
     section: Section;
-    key: Exclude<keyof NonNullable<WeaponOverrides[Section]>, 'enabled'>;
+    key: Exclude<
+      keyof NonNullable<WeaponOverrides[Section]>,
+      'enabled' | 'terrainOcclusionEnabled'
+    >;
     label: string;
     unit: string;
     min: number;
@@ -56,6 +69,60 @@ export type WeaponNumericSetting = {
 }[WeaponSection];
 
 export const weaponNumericSettings: readonly WeaponNumericSetting[] = [
+  {
+    section: 'explosion',
+    key: 'radiusMeters',
+    label: 'Радиус поражения',
+    unit: 'm',
+    min: 0,
+    max: 60,
+    step: 0.1,
+  },
+  {
+    section: 'explosion',
+    key: 'innerRadiusMeters',
+    label: 'Внутренний радиус',
+    unit: 'm',
+    min: 0,
+    max: 60,
+    step: 0.1,
+  },
+  {
+    section: 'explosion',
+    key: 'maxDamage',
+    label: 'Максимальный урон',
+    unit: 'HP',
+    min: 0,
+    max: 1000,
+    step: 1,
+  },
+  {
+    section: 'explosion',
+    key: 'minDamage',
+    label: 'Минимальный урон',
+    unit: 'HP',
+    min: 0,
+    max: 1000,
+    step: 1,
+  },
+  {
+    section: 'explosion',
+    key: 'terrainDamageRadiusMeters',
+    label: 'Радиус кратера взрыва',
+    unit: 'm',
+    min: 0,
+    max: 20,
+    step: 0.1,
+  },
+  {
+    section: 'explosion',
+    key: 'occludedDamageMultiplier',
+    label: 'Урон за укрытием',
+    unit: '×',
+    min: 0,
+    max: 1,
+    step: 0.01,
+  },
   {
     section: 'ricochet',
     key: 'minRicochetAngleDeg',
@@ -199,6 +266,7 @@ export function weaponSettingValue(
   setting: WeaponNumericSetting,
 ): number {
   const resolved = resolveWeapon(config, id);
+  if (setting.section === 'explosion') return explosionSettingValues(config, id)[setting.key];
   if (setting.section === 'impact') return resolved.impact.terrainDamage[setting.key];
   if (setting.section === 'ricochet') return resolved.projectile.ricochet[setting.key];
   if (setting.section === 'projectile') return resolved.projectile[setting.key];
@@ -243,12 +311,30 @@ export function validateWeaponOverrides(
     const target: WeaponOverrides = {};
     if (typeof source.ricochet?.enabled === 'boolean')
       target.ricochet = { enabled: source.ricochet.enabled };
+    if (typeof source.explosion?.enabled === 'boolean')
+      target.explosion = { enabled: source.explosion.enabled };
+    if (typeof source.explosion?.terrainOcclusionEnabled === 'boolean')
+      target.explosion = {
+        ...target.explosion,
+        terrainOcclusionEnabled: source.explosion.terrainOcclusionEnabled,
+      };
     for (const setting of weaponNumericSettings) {
       const value = (source[setting.section] as Record<string, number> | undefined)?.[setting.key];
       if (value === undefined || !Number.isFinite(value)) continue;
       const group = (target[setting.section] ??= {}) as Record<string, number>;
       const bounded = clamp(value, setting.min, setting.max);
       group[setting.key] = setting.key === 'maxRicochets' ? Math.round(bounded) : bounded;
+    }
+    if (target.explosion) {
+      const resolved = explosionSettingValues({ weaponOverrides: { [id]: target } }, id);
+      // Store dependent values when necessary so serialized overrides are valid too.
+      if (
+        target.explosion.innerRadiusMeters !== undefined ||
+        target.explosion.radiusMeters !== undefined
+      )
+        target.explosion = { ...target.explosion, innerRadiusMeters: resolved.innerRadiusMeters };
+      if (target.explosion.minDamage !== undefined || target.explosion.maxDamage !== undefined)
+        target.explosion = { ...target.explosion, minDamage: resolved.minDamage };
     }
     result[id] = target;
   }
@@ -266,6 +352,33 @@ export function withRicochetEnabled(
     weaponOverrides: {
       ...config.weaponOverrides,
       [id]: { ...overrides, ricochet: { ...overrides?.ricochet, enabled } },
+    },
+  };
+}
+
+/** Keep disabled explosion tuning available for editing and re-enabling. */
+export function explosionSettingValues(config: Pick<GameConfig, 'weaponOverrides'>, id: WeaponId) {
+  const projectile = projectileDefinitions[weaponDefinitions[id].projectileDefinitionId];
+  const defaults = resolveImpactDefinition(projectile.impactDefinitionId).explosion;
+  return validateExplosionDefinition({
+    ...defaultExplosionDefinition,
+    ...defaults,
+    ...config.weaponOverrides[id]?.explosion,
+  });
+}
+
+export function withExplosionToggle(
+  config: GameConfig,
+  id: WeaponId,
+  key: 'enabled' | 'terrainOcclusionEnabled',
+  value: boolean,
+): GameConfig {
+  const overrides = config.weaponOverrides[id];
+  return {
+    ...config,
+    weaponOverrides: {
+      ...config.weaponOverrides,
+      [id]: { ...overrides, explosion: { ...overrides?.explosion, [key]: value } },
     },
   };
 }

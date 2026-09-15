@@ -21,5 +21,8 @@ export function resolveEntityDamage(
     targetEntityId: impact.targetEntityId,
     damage: definition.enabled ? clamp(energy * scale, min, max) : 0,
     kineticEnergyJ: energy,
+    damageKind: 'direct',
+    position: { ...impact.position },
+    velocity: { ...impact.velocity },
   };
 }
