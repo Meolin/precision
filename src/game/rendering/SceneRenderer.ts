@@ -1,4 +1,4 @@
-import { Container, Graphics, Text } from 'pixi.js';
+import { Assets, Container, Graphics, Sprite, Text, type Texture } from 'pixi.js';
 import type { GameRuntime } from '../core/GameRuntime';
 import { muzzlePosition } from '../entities/Cannon';
 import { lerp } from '../math/Vec2';
@@ -7,6 +7,14 @@ import { TerrainLayer } from './TerrainLayer';
 import { fitWorld } from './viewport';
 import { hitboxCenter } from '../entities/Hitbox';
 import { DamagePopupLayer } from './DamagePopupLayer';
+import { calculateSurfaceNormal } from '../terrain/surfaceNormal';
+import cannonBaseUrl from '../assets/example_base.png';
+
+// The source image is a 1448 × 1086 PNG. Its visible chassis ends at roughly
+// 78% of the image height, so this anchor places the tracks on the terrain.
+const cannonBaseSourceWidth = 1448;
+const cannonBaseWidthMeters = 4.6;
+const cannonBaseGroundAnchor = 0.78;
 
 const colors = {
   sky: 0x182328,
@@ -23,6 +31,7 @@ export class SceneRenderer {
   private background = new Graphics();
   private terrain = new TerrainLayer();
   private trajectory = new Graphics();
+  private cannonBase = new Sprite();
   private cannon = new Graphics();
   private units = new Graphics();
   private projectiles = new Graphics();
@@ -32,14 +41,20 @@ export class SceneRenderer {
   private staticKey = '';
   private previewKey: object | null = null;
   private previewVisible = false;
+  private cannonStateIdentity: object | null = null;
+  private disposed = false;
 
   constructor(private parent: Container) {
+    void Assets.load<Texture>(cannonBaseUrl).then((texture) => {
+      if (!this.disposed) this.cannonBase.texture = texture;
+    });
     parent.addChild(this.world);
     this.world.addChild(
       this.background,
       this.terrain.sprite,
       this.labels,
       this.trajectory,
+      this.cannonBase,
       this.cannon,
       this.units,
       this.projectiles,
@@ -101,12 +116,32 @@ export class SceneRenderer {
     const requestedCannon = runtime.getRequestedCannon();
     const { position, surfaceY } = requestedCannon;
     const muzzle = muzzlePosition(requestedCannon, config);
+    if (this.cannonStateIdentity !== state.cannon) {
+      this.cannonStateIdentity = state.cannon;
+      this.cannonBase.rotation = 0;
+    }
+    this.cannonBase.anchor.set(0.5, cannonBaseGroundAnchor);
+    this.cannonBase.scale.set(cannonBaseWidthMeters / cannonBaseSourceWidth);
+    this.cannonBase.position.set(position.x, surfaceY);
+    this.cannonBase.alpha = requestedCannon.alive ? 1 : 0.3;
+    // Keep the initial pose horizontal. Once movement starts, align the hull
+    // with the terrain normal directly below the cannon and retain the last
+    // angle after the unit reaches its destination.
+    if (
+      requestedCannon.movement?.targetX !== null &&
+      requestedCannon.movement?.targetX !== undefined
+    ) {
+      const normal = calculateSurfaceNormal(
+        state.terrain,
+        { x: position.x, y: surfaceY },
+        // A downward probe velocity makes the utility's opposite-direction
+        // fallback point upward when the local terrain sample is degenerate.
+        { x: 0, y: 1 },
+      );
+      this.cannonBase.rotation = Math.atan2(normal.x, -normal.y);
+    }
     this.cannon.clear();
     this.cannon.alpha = requestedCannon.alive ? 1 : 0.3;
-    this.cannon
-      .roundRect(position.x - 1.6, surfaceY - 0.65, 3.2, 0.7, 0.2)
-      .fill(0x12191b)
-      .stroke({ color: colors.metal, width: pixel });
     this.cannon
       .moveTo(position.x, position.y)
       .lineTo(muzzle.x, muzzle.y)
@@ -120,8 +155,6 @@ export class SceneRenderer {
       .fill(0x4f6262)
       .stroke({ color: colors.metal, width: pixel });
     this.cannon.circle(position.x, position.y, 0.22).fill(colors.accent);
-    this.cannon.circle(position.x - 0.95, surfaceY - 0.24, 0.26).fill(0x5c6b64);
-    this.cannon.circle(position.x + 0.95, surfaceY - 0.24, 0.26).fill(0x5c6b64);
 
     this.projectiles.clear();
     this.debug.clear();
@@ -322,6 +355,7 @@ export class SceneRenderer {
   }
 
   destroy(): void {
+    this.disposed = true;
     this.terrain.destroy();
     this.damagePopups.destroy();
     this.parent.removeChild(this.world);
