@@ -207,6 +207,10 @@ describe('preview and runtime overrides', () => {
     config.physics.gravity = 9.81;
     state.projectiles = [];
     state.cannon.position = { x: 4, y: 2 };
+    // This airborne launch fixture tests ballistics independently of unit grounding.
+    delete state.cannon.movement;
+    // The target would now stand in this flight path on the replacement terrain.
+    state.units = [];
     state.cannon.angleRad = toRadians(5);
     const cells = state.terrain.cells.slice();
     const version = state.terrain.version;

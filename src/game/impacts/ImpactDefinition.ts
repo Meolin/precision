@@ -1,7 +1,10 @@
+import type { EntityDamageDefinition } from '../combat/EntityDamageDefinition';
+
 export type ImpactDefinitionId = 'basicImpact' | 'mortarImpact' | 'penetratorImpact';
 
 export interface ImpactDefinition {
   readonly id: ImpactDefinitionId;
+  readonly entityDamage: EntityDamageDefinition;
   /** Surface crater tuning is independent of the penetration channel. */
   readonly terrainDamage: Readonly<{
     enabled: boolean;

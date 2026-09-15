@@ -10,6 +10,9 @@ import { simulateTrajectoryPreview } from './trajectoryPreview';
 function projectile(): ProjectileState {
   return {
     id: 2,
+    ownerEntityId: 1,
+    teamId: 1,
+    hasExitedOwnerHitbox: true,
     spawnTick: 0,
     weaponId: 'basicCannon',
     projectileDefinitionId: 'basicShell',

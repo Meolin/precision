@@ -162,6 +162,6 @@ describe('game runtime', () => {
     runtime.enqueueCommand({ type: 'fire', cannonId: 1 });
     runtime.advance(1000 / 60);
     expect(runtime.getState().projectiles.map((shell) => shell.massKg)).toEqual([5, 10]);
-    expect(runtime.getState().projectiles.map((shell) => shell.id)).toEqual([2, 3]);
+    expect(runtime.getState().projectiles.map((shell) => shell.id)).toEqual([3, 4]);
   });
 });

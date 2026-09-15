@@ -93,6 +93,7 @@ describe('impact pipeline', () => {
         impact,
         {
           id: 'basicImpact',
+          entityDamage: impactDefinitions.basicImpact.entityDamage,
           terrainDamage: { ...impactDefinitions.basicImpact.terrainDamage, enabled: false },
         },
         shell,

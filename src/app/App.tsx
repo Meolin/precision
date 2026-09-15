@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react';
 import type { NumericSetting } from '../game/config/GameConfig';
-import { withSetting } from '../game/config/defaultGameConfig';
+import { withDamagePopupCurve, withSetting } from '../game/config/defaultGameConfig';
 import type { GameRuntime } from '../game/core/GameRuntime';
 import type { WeaponId } from '../game/weapons/WeaponDefinition';
 import {
@@ -49,7 +49,7 @@ export function App({ runtime }: { runtime: GameRuntime }) {
             BALLISTICS<span className="brand-divider">/</span>
             <b>LAB</b>
           </span>
-          <span className="version-badge">STEP 4</span>
+          <span className="version-badge">STEP 5</span>
         </div>
         <span className="header-note">
           <span className="status-dot" />
@@ -62,7 +62,7 @@ export function App({ runtime }: { runtime: GameRuntime }) {
             <div>
               <span className="eyebrow">2D PHYSICS SANDBOX</span>
               <h1>Баллистический полигон</h1>
-              <p>Задайте угол. Сделайте выстрел. Исследуйте физику.</p>
+              <p>Выберите позицию. Наведите орудие. Поразите цель.</p>
             </div>
             <span className="coordinate-note">
               +x →<br />
@@ -129,6 +129,9 @@ export function App({ runtime }: { runtime: GameRuntime }) {
           <FlightTelemetry runtime={runtime} />
           <div className="controls-bar" id="game-controls">
             <span>
+              <kbd>ПКМ</kbd> движение
+            </span>
+            <span>
               <kbd>Мышь</kbd> прицел
             </span>
             <span>
@@ -163,6 +166,9 @@ export function App({ runtime }: { runtime: GameRuntime }) {
           debug={debug}
           paused={paused}
           onSetting={updateSetting}
+          onDamagePopupCurve={(curve) =>
+            setConfig(runtime.updateConfig(withDamagePopupCurve(runtime.getConfig(), curve)))
+          }
           onWeaponSetting={updateWeaponSetting}
           onRicochetEnabled={(id, enabled) =>
             setConfig(runtime.updateConfig(withRicochetEnabled(runtime.getConfig(), id, enabled)))

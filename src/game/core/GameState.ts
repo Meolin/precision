@@ -8,6 +8,15 @@ import { generateTerrain } from '../terrain/generateTerrain';
 import type { TerrainGrid } from '../terrain/TerrainGrid';
 import type { TerrainMaterialId } from '../terrain/TerrainMaterialId';
 import type { ImpactResolution } from '../impacts/ImpactResolution';
+import { spawnTarget, type UnitState } from '../entities/UnitState';
+import type { EntityImpactEvent } from '../combat/EntityImpactEvent';
+import type { EntityDamageEvent } from '../combat/EntityDamageEvent';
+import type { HealthChange } from '../combat/applyEntityDamage';
+import { refreshUnitGrounding } from '../movement/terrainGrounding';
+
+export interface LastEntityImpact extends EntityImpactEvent, HealthChange {
+  damage: number;
+}
 
 /** Persistent telemetry, separate from the transient event queue. */
 export interface LastImpact extends ImpactEvent {
@@ -26,6 +35,8 @@ export interface LastImpact extends ImpactEvent {
   exitSpeed: number;
 }
 export type SimulationEvent =
+  | EntityImpactEvent
+  | EntityDamageEvent
   | ImpactEvent
   | TerrainDamageEvent
   | { type: 'impactResolved'; tick: number; projectileId: EntityId; resolution: ImpactResolution }
@@ -36,6 +47,8 @@ export interface GameState {
   seed: number;
   nextEntityId: EntityId;
   cannon: CannonState;
+  units: UnitState[];
+  lastEntityImpact: LastEntityImpact | null;
   projectiles: ProjectileState[];
   terrain: TerrainGrid;
   lastImpact: LastImpact | null;
@@ -45,12 +58,18 @@ export interface GameState {
 
 export function createGameState(config: GameConfig, seed: number): GameState {
   const terrain = generateTerrain(config, seed);
+  const cannon = spawnCannon(terrain, config);
+  const units = [cannon, spawnTarget(terrain, 2)];
+  for (const unit of units) refreshUnitGrounding(unit, terrain);
+  cannon.surfaceY = cannon.position.y + cannon.hitbox.radiusMeters;
   return {
     tick: 0,
     elapsedSeconds: 0,
     seed: seed >>> 0,
-    nextEntityId: 2,
-    cannon: spawnCannon(terrain, config),
+    nextEntityId: 3,
+    cannon,
+    units,
+    lastEntityImpact: null,
     projectiles: [],
     terrain,
     lastImpact: null,

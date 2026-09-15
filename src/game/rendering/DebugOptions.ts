@@ -6,6 +6,8 @@ export interface DebugOptions {
   samples: boolean;
   penetration: boolean;
   surfaceNormals: boolean;
+  entityHitboxes: boolean;
+  movementTarget: boolean;
 }
 export const defaultDebugOptions: DebugOptions = {
   trajectory: true,
@@ -15,4 +17,6 @@ export const defaultDebugOptions: DebugOptions = {
   samples: false,
   penetration: false,
   surfaceNormals: false,
+  entityHitboxes: false,
+  movementTarget: true,
 };

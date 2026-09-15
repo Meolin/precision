@@ -180,7 +180,7 @@ describe('weapon commands and preview', () => {
     runtime.enqueueCommand({ type: 'fire', cannonId: 1 });
     runtime.step();
     expect(runtime.getState().shotsFired).toBe(2);
-    expect(runtime.getState().nextEntityId).toBe(4);
+    expect(runtime.getState().nextEntityId).toBe(5);
     runtime.reset();
     expect(runtime.getState().cannon.nextFireTimeSeconds).toBe(0);
   });

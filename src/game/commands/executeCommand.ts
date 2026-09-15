@@ -13,7 +13,7 @@ export function applyCannonCommand(
   config: GameConfig,
   command: GameCommand,
 ): void {
-  if (command.cannonId !== cannon.id) return;
+  if (command.type === 'moveUnit' || command.cannonId !== cannon.id || !cannon.alive) return;
   if (command.type === 'setAim') {
     if (Number.isFinite(command.angleRad))
       cannon.angleRad = clamp(
@@ -38,7 +38,27 @@ export function applyCannonCommand(
 }
 
 export function executeCommand(state: GameState, config: GameConfig, command: GameCommand): void {
-  if (command.cannonId !== state.cannon.id) return;
+  if (command.type === 'moveUnit') {
+    const unit = state.units.find((candidate) => candidate.id === command.unitId);
+    if (
+      !unit?.alive ||
+      !unit.movement ||
+      unit.movement.speedMetersPerSecond <= 0 ||
+      !Number.isFinite(command.targetX)
+    )
+      return;
+    const radius = unit.hitbox.radiusMeters;
+    const offsetX = unit.hitbox.offset?.x ?? 0;
+    if (
+      command.targetX + offsetX < radius ||
+      command.targetX + offsetX > config.world.widthMeters - radius
+    )
+      return;
+    unit.movement.targetX = command.targetX;
+    unit.movement.blockedReason = null;
+    return;
+  }
+  if (command.cannonId !== state.cannon.id || !state.cannon.alive) return;
   if (command.type !== 'fire') applyCannonCommand(state.cannon, config, command);
   else {
     if (state.elapsedSeconds + 1e-9 < state.cannon.nextFireTimeSeconds) return;

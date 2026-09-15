@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import {
   numericSettings,
   settingValue,
   type EditableSection,
+  type DamagePopupVelocityCurve,
   type GameConfig,
   type NumericSetting,
 } from '../../game/config/GameConfig';
@@ -24,6 +25,7 @@ interface Props {
   debug: DebugOptions;
   paused: boolean;
   onSetting: (setting: NumericSetting, value: number) => void;
+  onDamagePopupCurve: (curve: DamagePopupVelocityCurve) => void;
   onWeaponSetting: (id: WeaponId, setting: WeaponNumericSetting, value: number) => void;
   onRicochetEnabled: (id: WeaponId, enabled: boolean) => void;
   onDebug: (key: keyof DebugOptions, value: boolean) => void;
@@ -31,6 +33,189 @@ interface Props {
   onStep: () => void;
   onReset: () => void;
   onResetSettings: () => void;
+}
+
+function CollapsibleSettingsGroup({
+  title,
+  meta,
+  children,
+  className,
+  ariaLabel,
+}: {
+  title: string;
+  meta: string;
+  children: ReactNode;
+  className?: string;
+  ariaLabel?: string;
+}) {
+  return (
+    <details
+      className={className ? `settings-group ${className}` : 'settings-group'}
+      open
+      aria-label={ariaLabel}
+    >
+      <summary>
+        <span className="settings-group-title">{title}</span>
+        <span className="settings-group-summary-meta">
+          <span>{meta}</span>
+          <span className="settings-group-chevron" aria-hidden="true">
+            ⌄
+          </span>
+        </span>
+      </summary>
+      <div className="settings-group-content">{children}</div>
+    </details>
+  );
+}
+
+const curveEditor = { width: 248, height: 142, padding: 18 };
+type CurveControl = keyof DamagePopupVelocityCurve;
+const curvePresets: readonly { label: string; curve: DamagePopupVelocityCurve }[] = [
+  {
+    label: 'Плавно',
+    curve: { control1: { x: 1 / 3, y: 1 }, control2: { x: 2 / 3, y: 2 / 3 } },
+  },
+  {
+    label: 'Импульс',
+    curve: { control1: { x: 0.22, y: 0.5 }, control2: { x: 0.65, y: 0.08 } },
+  },
+  {
+    label: 'Инерция',
+    curve: { control1: { x: 0.3, y: 1 }, control2: { x: 0.78, y: 0.95 } },
+  },
+];
+
+function BezierCurveControl({
+  curve,
+  onChange,
+}: {
+  curve: DamagePopupVelocityCurve;
+  onChange: (curve: DamagePopupVelocityCurve) => void;
+}) {
+  const { width, height, padding } = curveEditor;
+  const graphWidth = width - padding * 2;
+  const graphHeight = height - padding * 2;
+  const toScreen = ({ x, y }: { x: number; y: number }) => ({
+    x: padding + x * graphWidth,
+    y: padding + (1 - y) * graphHeight,
+  });
+  const first = toScreen(curve.control1);
+  const second = toScreen(curve.control2);
+  const setPoint = (control: CurveControl, point: { x: number; y: number }) => {
+    const y = Math.min(1, Math.max(0, point.y));
+    const rawX = Math.min(1, Math.max(0, point.x));
+    const x =
+      control === 'control1' ? Math.min(rawX, curve.control2.x) : Math.max(rawX, curve.control1.x);
+    onChange({ ...curve, [control]: { x, y } });
+  };
+  const updatePoint = (control: CurveControl, event: React.PointerEvent<SVGCircleElement>) => {
+    const svg = event.currentTarget.ownerSVGElement;
+    if (!svg) return;
+    const bounds = svg.getBoundingClientRect();
+    const viewX = ((event.clientX - bounds.left) / bounds.width) * width;
+    const viewY = ((event.clientY - bounds.top) / bounds.height) * height;
+    setPoint(control, {
+      x: (viewX - padding) / graphWidth,
+      y: 1 - (viewY - padding) / graphHeight,
+    });
+  };
+  const movePoint = (control: CurveControl, event: React.PointerEvent<SVGCircleElement>) => {
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) updatePoint(control, event);
+  };
+  const releasePoint = (event: React.PointerEvent<SVGCircleElement>) => {
+    if (event.currentTarget.hasPointerCapture(event.pointerId))
+      event.currentTarget.releasePointerCapture(event.pointerId);
+  };
+  const adjustPoint = (control: CurveControl, event: React.KeyboardEvent<SVGCircleElement>) => {
+    const step = event.shiftKey ? 0.05 : 0.01;
+    const point = curve[control];
+    const offsets =
+      event.key === 'ArrowLeft'
+        ? { x: -step, y: 0 }
+        : event.key === 'ArrowRight'
+          ? { x: step, y: 0 }
+          : event.key === 'ArrowDown'
+            ? { x: 0, y: -step }
+            : event.key === 'ArrowUp'
+              ? { x: 0, y: step }
+              : null;
+    if (!offsets) return;
+    event.preventDefault();
+    setPoint(control, { x: point.x + offsets.x, y: point.y + offsets.y });
+  };
+  return (
+    <div className="curve-editor">
+      <div className="curve-editor-heading">
+        <span>Кривая скорости</span>
+        <span>ВРЕМЯ →</span>
+      </div>
+      <div className="curve-presets" aria-label="Пресеты кривой">
+        {curvePresets.map((preset) => (
+          <button key={preset.label} type="button" onClick={() => onChange(preset.curve)}>
+            {preset.label}
+          </button>
+        ))}
+      </div>
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        role="img"
+        aria-label="Кривая скорости таблички урона. Перетаскивайте две контрольные точки."
+      >
+        <path
+          className="curve-grid"
+          d={`M ${padding} ${padding} H ${width - padding} M ${padding} ${height / 2} H ${width - padding} M ${padding} ${height - padding} H ${width - padding}`}
+        />
+        <path
+          className="curve-grid"
+          d={`M ${padding} ${padding} V ${height - padding} M ${width / 2} ${padding} V ${height - padding} M ${width - padding} ${padding} V ${height - padding}`}
+        />
+        <path
+          className="curve-guide"
+          d={`M ${padding} ${padding} L ${first.x} ${first.y} M ${width - padding} ${height - padding} L ${second.x} ${second.y}`}
+        />
+        <path
+          className="curve-line"
+          d={`M ${padding} ${padding} C ${first.x} ${first.y}, ${second.x} ${second.y}, ${width - padding} ${height - padding}`}
+        />
+        {(
+          [
+            ['control1', first],
+            ['control2', second],
+          ] as const
+        ).map(([control, point], index) => (
+          <circle
+            className="curve-handle"
+            cx={point.x}
+            cy={point.y}
+            r="5"
+            key={control}
+            role="button"
+            tabIndex={0}
+            aria-label={`Контрольная точка ${index + 1}`}
+            onPointerDown={(event) => {
+              event.currentTarget.setPointerCapture(event.pointerId);
+              updatePoint(control, event);
+            }}
+            onPointerMove={(event) => movePoint(control, event)}
+            onPointerUp={releasePoint}
+            onKeyDown={(event) => adjustPoint(control, event)}
+          />
+        ))}
+      </svg>
+      <div className="curve-values" aria-label="Координаты контрольных точек">
+        <span>
+          P1 <b>{curve.control1.x.toFixed(2)}</b> / <b>{curve.control1.y.toFixed(2)}</b>
+        </span>
+        <span>
+          P2 <b>{curve.control2.x.toFixed(2)}</b> / <b>{curve.control2.y.toFixed(2)}</b>
+        </span>
+      </div>
+      <p className="settings-note">
+        Перемещайте точки или используйте стрелки после фокуса; <kbd>Shift</kbd> меняет шаг на 0.05.
+        Выше кривая — дольше сохраняется скорость.
+      </p>
+    </div>
+  );
 }
 
 function NumericControl({
@@ -45,53 +230,84 @@ function NumericControl({
   const [draft, setDraft] = useState(String(value));
   const [focused, setFocused] = useState(false);
   const id = `${setting.section}-${setting.key}`;
+  const options = 'options' in setting ? setting.options : undefined;
+  const showSlider = setting.section === 'damagePopup';
+  if (options)
+    return (
+      <div className="select-row">
+        <label htmlFor={id}>{setting.label}</label>
+        <select id={id} value={value} onChange={(event) => onChange(Number(event.target.value))}>
+          {options.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      </div>
+    );
   return (
-    <div className="numeric-row">
-      <label htmlFor={id}>{setting.label}</label>
-      <div className="numeric-field">
+    <div className={showSlider ? 'numeric-control has-slider' : 'numeric-control'}>
+      <div className="numeric-row">
+        <label htmlFor={id}>{setting.label}</label>
+        <div className="numeric-field">
+          <input
+            id={id}
+            type="number"
+            inputMode="decimal"
+            min={setting.min}
+            max={setting.max}
+            step={setting.step}
+            value={focused ? draft : value}
+            onFocus={() => {
+              setFocused(true);
+              setDraft(String(value));
+            }}
+            onChange={(event) => {
+              const text = event.target.value;
+              setDraft(text);
+              const number = event.target.valueAsNumber;
+              if (
+                text !== '' &&
+                Number.isFinite(number) &&
+                number >= setting.min &&
+                number <= setting.max
+              )
+                onChange(number);
+            }}
+            onBlur={() => {
+              const number = Number(draft);
+              if (draft.trim() !== '' && Number.isFinite(number)) onChange(number);
+              setFocused(false);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') event.currentTarget.blur();
+            }}
+            aria-describedby={`${id}-unit`}
+          />
+          <span id={`${id}-unit`}>{setting.unit}</span>
+        </div>
+      </div>
+      {showSlider && (
         <input
-          id={id}
-          type="number"
-          inputMode="decimal"
+          className="value-slider"
+          type="range"
           min={setting.min}
           max={setting.max}
           step={setting.step}
-          value={focused ? draft : value}
-          onFocus={() => {
-            setFocused(true);
-            setDraft(String(value));
-          }}
-          onChange={(event) => {
-            const text = event.target.value;
-            setDraft(text);
-            const number = event.target.valueAsNumber;
-            if (
-              text !== '' &&
-              Number.isFinite(number) &&
-              number >= setting.min &&
-              number <= setting.max
-            )
-              onChange(number);
-          }}
-          onBlur={() => {
-            const number = Number(draft);
-            if (draft.trim() !== '' && Number.isFinite(number)) onChange(number);
-            setFocused(false);
-          }}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter') event.currentTarget.blur();
-          }}
-          aria-describedby={`${id}-unit`}
+          value={value}
+          onChange={(event) => onChange(event.currentTarget.valueAsNumber)}
+          aria-label={`${setting.label}: ${value}${setting.unit}`}
         />
-        <span id={`${id}-unit`}>{setting.unit}</span>
-      </div>
+      )}
     </div>
   );
 }
 
 const groups: { section: EditableSection; title: string; number: string }[] = [
+  { section: 'damagePopup', title: 'Таблички урона', number: 'FX' },
   { section: 'simulation', title: 'Симуляция', number: '01' },
   { section: 'physics', title: 'Физика мира', number: '02' },
+  { section: 'movement', title: 'Движение', number: 'MOVE' },
 ];
 const debugLabels: { key: keyof DebugOptions; label: string }[] = [
   { key: 'trajectory', label: 'Прогноз траектории' },
@@ -101,6 +317,8 @@ const debugLabels: { key: keyof DebugOptions; label: string }[] = [
   { key: 'samples', label: 'Точки проверки столкновений' },
   { key: 'penetration', label: 'Путь пробития' },
   { key: 'surfaceNormals', label: 'Нормали поверхности' },
+  { key: 'entityHitboxes', label: 'Хитбоксы юнитов' },
+  { key: 'movementTarget', label: 'Цель движения' },
 ];
 
 export function TechnicalPanel({
@@ -109,6 +327,7 @@ export function TechnicalPanel({
   debug,
   paused,
   onSetting,
+  onDamagePopupCurve,
   onWeaponSetting,
   onRicochetEnabled,
   onDebug,
@@ -118,6 +337,8 @@ export function TechnicalPanel({
   onResetSettings,
 }: Props) {
   const data = useTelemetry(runtime);
+  const [inspectedUnitId, setInspectedUnitId] = useState(2);
+  const inspectedUnit = data.units.find((unit) => unit.id === inspectedUnitId);
   return (
     <aside className="technical-panel" aria-labelledby="settings-title">
       <div className="panel-heading">
@@ -130,12 +351,135 @@ export function TechnicalPanel({
         </span>
       </div>
       <div className="panel-settings">
+        <CollapsibleSettingsGroup title="Сущности" meta="ENTITIES" ariaLabel="Сущности">
+          <select
+            id="unit-inspector"
+            aria-label="Выбор сущности"
+            value={inspectedUnitId}
+            onChange={(event) => setInspectedUnitId(Number(event.target.value))}
+          >
+            {data.units.map((unit) => (
+              <option key={unit.id} value={unit.id}>
+                Unit #{unit.id} · {unit.id === 1 ? 'Орудие' : 'Цель'}
+              </option>
+            ))}
+          </select>
+          <dl className="inspector-values">
+            <div>
+              <dt>Активные юниты</dt>
+              <dd>{data.activeUnits}</dd>
+            </div>
+            <div>
+              <dt>Команда</dt>
+              <dd>{inspectedUnit?.teamId ?? '—'}</dd>
+            </div>
+            <div>
+              <dt>Здоровье</dt>
+              <dd>
+                {formatNumber(inspectedUnit?.health.current ?? null, 1)} /{' '}
+                {inspectedUnit?.health.max ?? '—'}
+              </dd>
+            </div>
+            <div>
+              <dt>Жив</dt>
+              <dd>{inspectedUnit?.alive ? 'Да' : 'Нет'}</dd>
+            </div>
+            <div>
+              <dt>Хитбокс</dt>
+              <dd>Circle</dd>
+            </div>
+            <div>
+              <dt>Радиус</dt>
+              <dd>{formatNumber(inspectedUnit?.hitbox.radiusMeters ?? null, 2)} m</dd>
+            </div>
+          </dl>
+          <h3>
+            <span>Движение юнита</span>
+            <span>MOVEMENT</span>
+          </h3>
+          <dl className="inspector-values">
+            <div>
+              <dt>Позиция X / Y</dt>
+              <dd>
+                {formatNumber(inspectedUnit?.position.x ?? null, 2)} /{' '}
+                {formatNumber(inspectedUnit?.position.y ?? null, 2)} m
+              </dd>
+            </div>
+            <div>
+              <dt>Цель X</dt>
+              <dd>{formatNumber(inspectedUnit?.movement?.targetX ?? null, 2)} m</dd>
+            </div>
+            <div>
+              <dt>Скорость</dt>
+              <dd>{formatNumber(inspectedUnit?.movement?.speedMetersPerSecond ?? null, 1)} m/s</dd>
+            </div>
+            <div>
+              <dt>На земле</dt>
+              <dd>{inspectedUnit?.movement?.grounded ? 'Да' : 'Нет'}</dd>
+            </div>
+            <div>
+              <dt>Склон</dt>
+              <dd>{formatNumber(inspectedUnit?.movement?.slopeAngleDeg ?? null, 1)}°</dd>
+            </div>
+            <div>
+              <dt>Остановка</dt>
+              <dd>
+                {inspectedUnit?.movement?.blockedReason === 'slope'
+                  ? 'Крутой склон'
+                  : inspectedUnit?.movement?.blockedReason === 'noGround'
+                    ? 'Нет опоры'
+                    : '—'}
+              </dd>
+            </div>
+          </dl>
+          <p className="settings-note">ПКМ на полигоне — переместить орудие. Цель неподвижна.</p>
+        </CollapsibleSettingsGroup>
+        <CollapsibleSettingsGroup
+          title="Попадание в юнит"
+          meta="ENTITY IMPACT"
+          ariaLabel="Последнее попадание в юнит"
+        >
+          <p className="settings-note">
+            {data.entityImpactWeapon
+              ? `${data.entityImpactWeapon} / ${data.entityImpactProjectile}`
+              : 'Попадите в цель справа, чтобы увидеть урон.'}
+          </p>
+          <dl className="inspector-values">
+            <div>
+              <dt>Цель</dt>
+              <dd>{data.entityImpact ? `Unit #${data.entityImpact.targetEntityId}` : '—'}</dd>
+            </div>
+            <div>
+              <dt>Источник</dt>
+              <dd>{data.entityImpact ? `Unit #${data.entityImpact.ownerEntityId}` : '—'}</dd>
+            </div>
+            <div>
+              <dt>Энергия удара</dt>
+              <dd>{formatNumber(data.entityImpact?.kineticEnergyJ ?? null)} J</dd>
+            </div>
+            <div>
+              <dt>Урон</dt>
+              <dd>{formatNumber(data.entityImpact?.damage ?? null, 1)}</dd>
+            </div>
+            <div>
+              <dt>HP до</dt>
+              <dd>{formatNumber(data.entityImpact?.healthBefore ?? null, 1)}</dd>
+            </div>
+            <div>
+              <dt>HP после</dt>
+              <dd>{formatNumber(data.entityImpact?.healthAfter ?? null, 1)}</dd>
+            </div>
+            <div>
+              <dt>Результат</dt>
+              <dd>{data.entityImpact?.result ?? '—'}</dd>
+            </div>
+          </dl>
+          <p className="settings-note">
+            Прямое попадание · урон = энергия × 0.01, с пределом для каждого оружия.
+          </p>
+        </CollapsibleSettingsGroup>
         {groups.map((group) => (
-          <section className="settings-group" key={group.section}>
-            <h3>
-              <span>{group.title}</span>
-              <span>{group.number}</span>
-            </h3>
+          <CollapsibleSettingsGroup key={group.section} title={group.title} meta={group.number}>
             {numericSettings
               .filter((setting) => setting.section === group.section)
               .map((setting) => (
@@ -146,15 +490,28 @@ export function TechnicalPanel({
                   onChange={(value) => onSetting(setting, value)}
                 />
               ))}
-          </section>
+            {group.section === 'damagePopup' && (
+              <>
+                <BezierCurveControl
+                  curve={config.damagePopup.velocityCurve}
+                  onChange={onDamagePopupCurve}
+                />
+                <p className="settings-note">
+                  Скорость ×1 — скорость снаряда при попадании; ×0 — без движения. Размер ×1 —
+                  исходный размер карточки, дополнительно растущий от силы удара до ×2. Дистанция
+                  задана до учёта мощности удара, которая увеличивает её до ×3. Настройки
+                  применяются к новым попаданиям. Время ×1 рассчитывается из скорости, дистанции и
+                  кривой; большее значение замедляет анимацию. Подъём действует на протяжении всей
+                  анимации, включая остановку и исчезновение.
+                </p>
+              </>
+            )}
+          </CollapsibleSettingsGroup>
         ))}
-        <section className="settings-group">
-          <h3>
-            <label htmlFor="weapon-selector">Оружие</label>
-            <span>1 / 2 / 3</span>
-          </h3>
+        <CollapsibleSettingsGroup title="Оружие" meta="1 / 2 / 3">
           <select
             id="weapon-selector"
+            aria-label="Выбор оружия"
             value={data.weaponId}
             onChange={(event) => {
               const weaponId = event.target.value;
@@ -196,12 +553,8 @@ export function TechnicalPanel({
               {formatNumber(data.muzzleEnergy)} <small>J</small>
             </output>
           </div>
-        </section>
-        <section className="settings-group">
-          <h3>
-            <span>Разрушение рельефа</span>
-            <span>IMPACT</span>
-          </h3>
+        </CollapsibleSettingsGroup>
+        <CollapsibleSettingsGroup title="Разрушение рельефа" meta="IMPACT">
           {weaponNumericSettings
             .filter((setting) => setting.section === 'impact')
             .map((setting) => (
@@ -213,12 +566,8 @@ export function TechnicalPanel({
               />
             ))}
           <p className="settings-note">Применяется при попадании снарядов этого оружия.</p>
-        </section>
-        <section className="settings-group">
-          <h3>
-            <span>Пробитие</span>
-            <span>PENETRATION</span>
-          </h3>
+        </CollapsibleSettingsGroup>
+        <CollapsibleSettingsGroup title="Пробитие" meta="PENETRATION">
           <dl className="inspector-values">
             <div>
               <dt>Включено</dt>
@@ -247,12 +596,8 @@ export function TechnicalPanel({
           <p className="settings-note">
             Минимальный радиус канала учитывает размер снаряда и ячейки.
           </p>
-        </section>
-        <section className="settings-group" aria-label="Параметры рикошета">
-          <h3>
-            <span>Рикошет</span>
-            <span>RICOCHET</span>
-          </h3>
+        </CollapsibleSettingsGroup>
+        <CollapsibleSettingsGroup title="Рикошет" meta="RICOCHET" ariaLabel="Параметры рикошета">
           <label className="check-row">
             <input
               type="checkbox"
@@ -278,12 +623,12 @@ export function TechnicalPanel({
             Настройки применяются к следующему выстрелу. Прогноз показывает один рикошет голубой
             точкой.
           </p>
-        </section>
-        <section className="settings-group" aria-label="Материал под курсором">
-          <h3>
-            <span>Материал под курсором</span>
-            <span>MATERIAL</span>
-          </h3>
+        </CollapsibleSettingsGroup>
+        <CollapsibleSettingsGroup
+          title="Материал под курсором"
+          meta="MATERIAL"
+          ariaLabel="Материал под курсором"
+        >
           <dl className="inspector-values">
             <div>
               <dt>Материал</dt>
@@ -312,12 +657,8 @@ export function TechnicalPanel({
               : 'Наведите курсор на полигон: Soil — грунт, Rock — скала.'}
           </p>
           <p className="settings-note">Blast resistance пока справочная величина.</p>
-        </section>
-        <section className="settings-group debug-group">
-          <h3>
-            <span>Визуализация</span>
-            <span>05</span>
-          </h3>
+        </CollapsibleSettingsGroup>
+        <CollapsibleSettingsGroup title="Визуализация" meta="05" className="debug-group">
           {debugLabels.map(({ key, label }) => (
             <label className="check-row" key={key}>
               <input
@@ -332,7 +673,7 @@ export function TechnicalPanel({
             Путь записывается при включённой опции: вход — оранжевый, выход — зелёный, остановка —
             розовая.
           </p>
-        </section>
+        </CollapsibleSettingsGroup>
       </div>
       <div className="panel-actions">
         <div className="button-pair">

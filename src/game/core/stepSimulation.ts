@@ -12,6 +12,11 @@ import { penetrationChannelRadius } from '../impacts/resolveImpact';
 import type { TerrainDamageEvent } from '../terrain/TerrainDamageEvent';
 import type { GameState } from './GameState';
 import { applyRicochetContinuation } from '../impacts/ricochetContinuation';
+import { createEntityImpactEvent } from '../combat/EntityImpactEvent';
+import { resolveEntityDamage } from '../combat/resolveEntityDamage';
+import { applyEntityDamage } from '../combat/applyEntityDamage';
+import { updateUnitMovement } from '../movement/updateUnitMovement';
+import { refreshUnitGrounding } from '../movement/terrainGrounding';
 
 export function stepSimulation(
   state: GameState,
@@ -21,8 +26,16 @@ export function stepSimulation(
   samples?: Vec2[],
 ): void {
   state.events = [];
+  // Ground before queued fire commands; move before projectile collision queries.
+  for (const unit of state.units) refreshUnitGrounding(unit, state.terrain);
+  if (state.cannon.movement)
+    state.cannon.surfaceY = state.cannon.position.y + state.cannon.hitbox.radiusMeters;
   for (const command of commands) executeCommand(state, config, command);
+  for (const unit of state.units) updateUnitMovement(unit, state.terrain, config.movement, dt);
+  if (state.cannon.movement)
+    state.cannon.surfaceY = state.cannon.position.y + state.cannon.hitbox.radiusMeters;
   for (const projectile of state.projectiles) {
+    if (!projectile.alive) continue;
     if (projectile.penetrationState) {
       const active = projectile.penetrationState;
       const profile = projectile.penetration;
@@ -103,8 +116,20 @@ export function stepSimulation(
         projectile.position.y <= config.world.heightMeters + projectile.radius;
       continue;
     }
-    const hit = advanceProjectile(projectile, state.terrain, config, dt, samples);
+    const hit = advanceProjectile(projectile, state.terrain, config, dt, samples, state.units);
     if (!hit) continue;
+    if (hit.type === 'entity') {
+      const impact = createEntityImpactEvent(projectile, hit, state.tick);
+      const definition = resolveImpactDefinition(projectile.impactDefinitionId).entityDamage;
+      const damage = resolveEntityDamage(impact, definition);
+      state.events.push(impact, damage);
+      const health = applyEntityDamage(state.units, damage);
+      if (health) state.lastEntityImpact = { ...impact, ...health, damage: damage.damage };
+      projectile.position = { ...hit.position };
+      projectile.velocity = { x: 0, y: 0 };
+      projectile.alive = false;
+      continue;
+    }
     const impact = createImpactEvent(projectile, hit, state.tick);
     state.events.push(impact);
     // Resolve with the source weapon, even if another weapon is selected now.
@@ -182,6 +207,10 @@ export function stepSimulation(
     };
   }
   state.projectiles = state.projectiles.filter((projectile) => projectile.alive);
+  // Craters/channels from this tick also ground stationary targets immediately.
+  for (const unit of state.units) refreshUnitGrounding(unit, state.terrain);
+  if (state.cannon.movement)
+    state.cannon.surfaceY = state.cannon.position.y + state.cannon.hitbox.radiusMeters;
   state.tick++;
   state.elapsedSeconds += dt;
 }

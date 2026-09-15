@@ -9,6 +9,8 @@ import { SimulationClock } from './SimulationClock';
 import { stepSimulation } from './stepSimulation';
 import type { PenetrationResult } from '../impacts/PenetrationResult';
 import type { PenetrationSegment } from '../impacts/PenetrationResult';
+import type { EntityImpactEvent } from '../combat/EntityImpactEvent';
+import { createDamagePopup, type DamagePopup } from '../effects/DamagePopup';
 
 export class GameRuntime {
   private state: GameState;
@@ -23,6 +25,8 @@ export class GameRuntime {
   recordPenetrationPaths = false;
   penetrationPath: PenetrationResult | null = null;
   private cursorPosition: Vec2 | null = null;
+  private damagePopups: DamagePopup[] = [];
+  private presentationSeconds = 0;
 
   constructor(config: GameConfig = defaultGameConfig, seed = 12345) {
     this.config = validateConfig(config);
@@ -31,6 +35,13 @@ export class GameRuntime {
 
   getState(): Readonly<GameState> {
     return this.state;
+  }
+  getDamagePopups(): readonly DamagePopup[] {
+    return this.damagePopups;
+  }
+  /** Fractional simulation time for effects, frozen on pause and cleared on reset. */
+  get presentationTimeSeconds(): number {
+    return this.presentationSeconds;
   }
   /** Presentation-only cursor state; it never participates in simulation or snapshots. */
   setCursorPosition(position: Vec2 | null): void {
@@ -76,6 +87,8 @@ export class GameRuntime {
       this.commands,
       this.recordCollisionSamples ? this.collisionSamples : undefined,
     );
+    this.presentationSeconds = Math.max(this.presentationSeconds, this.state.elapsedSeconds);
+    this.captureDamagePopups();
     if (!this.recordPenetrationPaths) this.penetrationPath = null;
     else {
       for (const event of this.state.events)
@@ -113,14 +126,37 @@ export class GameRuntime {
     this.commands = [];
   };
 
+  private captureDamagePopups(): void {
+    this.damagePopups = this.damagePopups.filter(
+      (popup) => popup.expiresAtSeconds > this.presentationSeconds,
+    );
+    // Capture every tick before the transient event queue is cleared by the next tick.
+    const impacts = new Map<number, EntityImpactEvent>();
+    for (const event of this.state.events) {
+      if (event.type === 'entityImpact') impacts.set(event.projectileId, event);
+      else if (event.type === 'entityDamage' && event.projectileId !== undefined) {
+        const impact = impacts.get(event.projectileId);
+        if (impact && impact.targetEntityId === event.targetEntityId)
+          this.damagePopups.push(
+            createDamagePopup(impact, event, this.state.elapsedSeconds, this.config.damagePopup),
+          );
+      }
+    }
+  }
+
   advance(frameDeltaMs: number): void {
-    if (!this.paused)
-      this.clock.advance(
-        frameDeltaMs,
-        this.config.simulation.tickRate,
-        this.config.simulation.maxFrameDeltaMs,
-        this.tick,
-      );
+    if (this.paused) return;
+    this.clock.advance(
+      frameDeltaMs,
+      this.config.simulation.tickRate,
+      this.config.simulation.maxFrameDeltaMs,
+      this.tick,
+    );
+    this.presentationSeconds = Math.max(
+      this.presentationSeconds,
+      this.state.elapsedSeconds +
+        this.clock.getAlpha(this.config.simulation.tickRate) / this.config.simulation.tickRate,
+    );
   }
 
   setPaused(paused: boolean): void {
@@ -137,6 +173,8 @@ export class GameRuntime {
     this.collisionSamples.length = 0;
     this.penetrationPath = null;
     this.cursorPosition = null;
+    this.damagePopups = [];
+    this.presentationSeconds = 0;
     this.clock.reset();
     this.preview = null;
   }
@@ -155,6 +193,8 @@ export class GameRuntime {
       validated.terrain.rockVariationMeters !== this.config.terrain.rockVariationMeters;
     if (validated.simulation.tickRate !== this.config.simulation.tickRate) this.clock.reset();
     this.config = validated;
+    if (this.state.cannon.movement)
+      this.state.cannon.movement.speedMetersPerSecond = validated.movement.speedMetersPerSecond;
     this.configRevision++;
     if (resize) this.reset();
     return this.config;
@@ -166,11 +206,17 @@ export class GameRuntime {
 
   getTrajectoryPreview(): TrajectoryPreview {
     const cannon = this.getRequestedCannon();
-    const key = `${this.configRevision}:${this.state.terrain.version}:${cannon.weaponId}:${cannon.angleRad}`;
+    const unitsKey = this.state.units
+      .map(
+        (unit) =>
+          `${unit.id}:${unit.alive}:${unit.position.x}:${unit.position.y}:${unit.hitbox.radiusMeters}:${unit.hitbox.offset?.x ?? 0}:${unit.hitbox.offset?.y ?? 0}`,
+      )
+      .join('|');
+    const key = `${this.configRevision}:${this.state.terrain.version}:${cannon.weaponId}:${cannon.angleRad}:${cannon.position.x}:${cannon.position.y}:${unitsKey}`;
     if (this.preview?.key !== key)
       this.preview = {
         key,
-        value: simulateTrajectoryPreview(cannon, this.state.terrain, this.config),
+        value: simulateTrajectoryPreview(cannon, this.state.terrain, this.config, this.state.units),
       };
     return this.preview.value;
   }

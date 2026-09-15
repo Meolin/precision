@@ -5,6 +5,8 @@ import { lerp } from '../math/Vec2';
 import type { DebugOptions } from './DebugOptions';
 import { TerrainLayer } from './TerrainLayer';
 import { fitWorld } from './viewport';
+import { hitboxCenter } from '../entities/Hitbox';
+import { DamagePopupLayer } from './DamagePopupLayer';
 
 const colors = {
   sky: 0x182328,
@@ -22,9 +24,11 @@ export class SceneRenderer {
   private terrain = new TerrainLayer();
   private trajectory = new Graphics();
   private cannon = new Graphics();
+  private units = new Graphics();
   private projectiles = new Graphics();
   private debug = new Graphics();
   private labels = new Container();
+  private damagePopups = new DamagePopupLayer();
   private staticKey = '';
   private previewKey: object | null = null;
   private previewVisible = false;
@@ -37,8 +41,10 @@ export class SceneRenderer {
       this.labels,
       this.trajectory,
       this.cannon,
+      this.units,
       this.projectiles,
       this.debug,
+      this.damagePopups.container,
     );
   }
 
@@ -52,6 +58,7 @@ export class SceneRenderer {
     this.world.position.set(viewport.offsetX, viewport.offsetY);
     this.world.scale.set(ppm);
     this.terrain.update(state.terrain);
+    this.damagePopups.update(runtime.getDamagePopups(), runtime.presentationTimeSeconds, pixel);
     const staticKey = `${width}:${height}:${config.world.widthMeters}:${config.world.heightMeters}:${options.grid}:${state.terrain.cellSizeMeters}`;
     if (this.staticKey !== staticKey) {
       this.staticKey = staticKey;
@@ -95,6 +102,7 @@ export class SceneRenderer {
     const { position, surfaceY } = requestedCannon;
     const muzzle = muzzlePosition(requestedCannon, config);
     this.cannon.clear();
+    this.cannon.alpha = requestedCannon.alive ? 1 : 0.3;
     this.cannon
       .roundRect(position.x - 1.6, surfaceY - 0.65, 3.2, 0.7, 0.2)
       .fill(0x12191b)
@@ -117,6 +125,66 @@ export class SceneRenderer {
 
     this.projectiles.clear();
     this.debug.clear();
+    this.units.clear();
+    const movementTarget = state.cannon.movement?.targetX;
+    if (options.movementTarget && state.cannon.alive && movementTarget != null) {
+      const targetY = state.terrain.findSurfaceY(movementTarget) ?? config.world.heightMeters;
+      this.debug
+        .moveTo(movementTarget, targetY)
+        .lineTo(movementTarget, targetY - 2.5)
+        .lineTo(movementTarget + 1.2, targetY - 2)
+        .lineTo(movementTarget, targetY - 1.5)
+        .stroke({ color: colors.accent, width: 1.5 * pixel });
+    }
+    for (const unit of state.units) {
+      const center = hitboxCenter(unit.position, unit.hitbox);
+      const radius = unit.hitbox.radiusMeters;
+      const color = unit.teamId === 1 ? colors.accent : colors.orange;
+      if (unit.id !== state.cannon.id) {
+        this.units
+          .circle(center.x, center.y, radius)
+          .fill({ color: unit.alive ? 0x8a5740 : 0x343c3c, alpha: unit.alive ? 1 : 0.65 })
+          .stroke({ color, width: pixel, alpha: unit.alive ? 1 : 0.25 });
+        if (unit.alive)
+          this.units.circle(center.x, center.y, radius * 0.4).stroke({ color, width: pixel });
+      }
+      if (unit.alive) {
+        const barWidth = Math.max(3, 24 * pixel);
+        const barY = center.y - radius - 0.7;
+        this.units.rect(center.x - barWidth / 2, barY, barWidth, 3 * pixel).fill(0x0d1719);
+        this.units
+          .rect(
+            center.x - barWidth / 2,
+            barY,
+            (barWidth * unit.health.current) / unit.health.max,
+            3 * pixel,
+          )
+          .fill(color);
+        if (options.entityHitboxes)
+          this.debug
+            .circle(center.x, center.y, radius)
+            .stroke({ color: 0xed85ac, width: 1.5 * pixel });
+      } else {
+        this.units
+          .moveTo(center.x - radius, center.y - radius)
+          .lineTo(center.x + radius, center.y + radius)
+          .moveTo(center.x - radius, center.y + radius)
+          .lineTo(center.x + radius, center.y - radius)
+          .stroke({ color: colors.orange, width: pixel, alpha: 0.65 });
+      }
+    }
+    if (state.lastEntityImpact) {
+      const { position: point, surfaceNormal: normal } = state.lastEntityImpact;
+      if (options.impact)
+        this.debug
+          .circle(point.x, point.y, 4 * pixel)
+          .stroke({ color: 0xed85ac, width: 1.5 * pixel });
+      if (options.surfaceNormals)
+        this.debug
+          .moveTo(point.x, point.y)
+          .lineTo(point.x + normal.x * 2, point.y + normal.y * 2)
+          .stroke({ color: 0xed85ac, width: 1.5 * pixel });
+    }
     for (const projectile of state.projectiles) {
       const point = lerp(
         projectile.previousPosition,
@@ -226,6 +294,7 @@ export class SceneRenderer {
 
   destroy(): void {
     this.terrain.destroy();
+    this.damagePopups.destroy();
     this.parent.removeChild(this.world);
     this.world.destroy({ children: true });
   }

@@ -1,4 +1,5 @@
 import type { GameState } from './GameState';
+import { cloneUnit } from '../entities/UnitState';
 
 /** Explicit, on-demand boundary; never JSON-clone state in the frame loop. */
 export function createGameSnapshot(state: Readonly<GameState>) {
@@ -7,7 +8,16 @@ export function createGameSnapshot(state: Readonly<GameState>) {
     elapsedSeconds: state.elapsedSeconds,
     seed: state.seed,
     nextEntityId: state.nextEntityId,
-    cannon: { ...state.cannon, position: { ...state.cannon.position } },
+    cannon: cloneUnit(state.cannon),
+    units: state.units.map(cloneUnit),
+    lastEntityImpact: state.lastEntityImpact
+      ? {
+          ...state.lastEntityImpact,
+          position: { ...state.lastEntityImpact.position },
+          velocity: { ...state.lastEntityImpact.velocity },
+          surfaceNormal: { ...state.lastEntityImpact.surfaceNormal },
+        }
+      : null,
     projectiles: state.projectiles.map((p) => ({
       ...p,
       position: { ...p.position },

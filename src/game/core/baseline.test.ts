@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { cloneConfig } from '../config/defaultGameConfig';
 import { toRadians } from '../math/Vec2';
 import { GameRuntime } from './GameRuntime';
+import { spawnCannon } from '../entities/Cannon';
 
 // Captured from ballistic-mvp-v1 BEFORE the weapon/impact migration.
 // Keep these snapshots fixed: they protect integration, contact and destruction.
@@ -18,6 +19,10 @@ describe('ballistic MVP baseline', () => {
     config.physics.windAcceleration = wind;
     config.physics.airDrag = drag;
     const runtime = new GameRuntime(config);
+    // Preserve the original launch pose for the immutable ballistic snapshots.
+    // Step 5 grounding deliberately raises a full circle clear of adjacent cells.
+    Object.assign(runtime.getState().cannon, spawnCannon(runtime.getState().terrain, config));
+    delete runtime.getState().cannon.movement;
     runtime.enqueueCommand({ type: 'setAim', cannonId: 1, angleRad: toRadians(angle) });
     runtime.advance(1000 / 60);
     const preview = runtime.getTrajectoryPreview();

@@ -38,6 +38,29 @@ export function useGameInput(
       return true;
     };
     const fire = (event: PointerEvent) => {
+      if (event.button === 2) {
+        const bounds = element.getBoundingClientRect();
+        const config = runtime.getConfig();
+        const point = screenToWorld(
+          { x: event.clientX - bounds.left, y: event.clientY - bounds.top },
+          fitWorld(bounds.width, bounds.height, config.world),
+        );
+        if (
+          point.x < 0 ||
+          point.y < 0 ||
+          point.x >= config.world.widthMeters ||
+          point.y >= config.world.heightMeters
+        )
+          return;
+        event.preventDefault();
+        element.focus({ preventScroll: true });
+        runtime.enqueueCommand({
+          type: 'moveUnit',
+          unitId: runtime.getState().cannon.id,
+          targetX: point.x,
+        });
+        return;
+      }
       if (event.button !== 0 || !aim(event)) return;
       element.focus({ preventScroll: true });
       runtime.enqueueCommand({ type: 'fire', cannonId: runtime.getState().cannon.id });
@@ -97,6 +120,8 @@ export function useGameInput(
       }
     };
     const clearCursor = () => runtime.setCursorPosition(null);
+    const preventContextMenu = (event: MouseEvent) => event.preventDefault();
+    element.addEventListener('contextmenu', preventContextMenu);
     element.addEventListener('pointerleave', clearCursor);
     window.addEventListener('blur', clearCursor);
     element.addEventListener('pointermove', aim);
@@ -104,6 +129,7 @@ export function useGameInput(
     window.addEventListener('keydown', keydown);
     return () => {
       clearCursor();
+      element.removeEventListener('contextmenu', preventContextMenu);
       element.removeEventListener('pointerleave', clearCursor);
       window.removeEventListener('blur', clearCursor);
       element.removeEventListener('pointermove', aim);

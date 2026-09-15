@@ -1,6 +1,8 @@
 import type { GameConfig } from '../config/GameConfig';
 import { muzzlePosition, type CannonState } from '../entities/Cannon';
 import type { EntityId, Vec2 } from '../math/Vec2';
+import type { TeamId } from '../entities/UnitState';
+import { hitboxCenter } from '../entities/Hitbox';
 import type { ImpactDefinitionId } from '../impacts/ImpactDefinition';
 import type { WeaponId } from '../weapons/WeaponDefinition';
 import { resolveWeapon } from '../weapons/WeaponSettings';
@@ -9,6 +11,9 @@ import type { ActivePenetrationState } from '../impacts/PenetrationResult';
 
 export interface ProjectileState {
   id: EntityId;
+  ownerEntityId: EntityId;
+  teamId: TeamId;
+  hasExitedOwnerHitbox: boolean;
   spawnTick: number;
   weaponId: WeaponId;
   projectileDefinitionId: ProjectileDefinitionId;
@@ -38,8 +43,14 @@ export function createProjectile(
 ): ProjectileState {
   const position = muzzlePosition(cannon, config);
   const { weapon, projectile } = resolveWeapon(config, cannon.weaponId);
+  const center = hitboxCenter(cannon.position, cannon.hitbox);
   return {
     id,
+    ownerEntityId: cannon.id,
+    teamId: cannon.teamId,
+    hasExitedOwnerHitbox:
+      Math.hypot(position.x - center.x, position.y - center.y) >
+      cannon.hitbox.radiusMeters + projectile.radiusMeters,
     spawnTick: tick,
     weaponId: weapon.id,
     projectileDefinitionId: projectile.id,

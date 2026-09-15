@@ -6,6 +6,16 @@ export const defaultGameConfig: GameConfig = {
   simulation: { tickRate: 60, maxFrameDeltaMs: 250 },
   world: { widthMeters: 120, heightMeters: 64, pixelsPerMeter: 20 },
   physics: { gravity: 9.81, windAcceleration: 0, airDrag: 0 },
+  movement: { speedMetersPerSecond: 4, maxSlopeAngleDeg: 45 },
+  damagePopup: {
+    initialSpeedMultiplier: 1,
+    initialSizeMultiplier: 1,
+    baseDistanceMeters: 4,
+    animationDurationMultiplier: 1,
+    verticalRiseSpeedMetersPerSecond: 0.6,
+    // v(t) = 1 - t² when x = t: a smooth, gradually increasing deceleration.
+    velocityCurve: { control1: { x: 1 / 3, y: 1 }, control2: { x: 2 / 3, y: 2 / 3 } },
+  },
   weaponOverrides: {},
   terrain: {
     cellSizeMeters: 0.2,
@@ -31,6 +41,15 @@ export function cloneConfig(config: GameConfig = defaultGameConfig): GameConfig 
     simulation: { ...config.simulation },
     world: { ...config.world },
     physics: { ...config.physics },
+    movement: { ...config.movement },
+    damagePopup: {
+      ...defaultGameConfig.damagePopup,
+      ...config.damagePopup,
+      velocityCurve: {
+        ...defaultGameConfig.damagePopup.velocityCurve,
+        ...config.damagePopup.velocityCurve,
+      },
+    },
     weaponOverrides: Object.fromEntries(
       Object.entries(config.weaponOverrides).map(([id, overrides]) => [
         id,
@@ -61,16 +80,49 @@ export function withSetting(
   return { ...config, [setting.section]: { ...config[setting.section], [setting.key]: value } };
 }
 
+export function withDamagePopupCurve(
+  config: GameConfig,
+  velocityCurve: GameConfig['damagePopup']['velocityCurve'],
+): GameConfig {
+  return {
+    ...config,
+    damagePopup: {
+      ...config.damagePopup,
+      velocityCurve: {
+        control1: { ...velocityCurve.control1 },
+        control2: { ...velocityCurve.control2 },
+      },
+    },
+  };
+}
+
 export function validateConfig(input: GameConfig): GameConfig {
   const config = cloneConfig(input);
   config.weaponOverrides = validateWeaponOverrides(config.weaponOverrides);
   for (const setting of numericSettings) {
     const value = settingValue(config, setting);
-    const group: Record<string, number> = config[setting.section];
-    group[setting.key] = Number.isFinite(value)
-      ? clamp(value, setting.min, setting.max)
-      : settingValue(defaultGameConfig, setting);
+    const group = config[setting.section] as unknown as Record<string, number>;
+    const validOption =
+      !setting.options || setting.options.some((option) => option.value === value);
+    group[setting.key] =
+      Number.isFinite(value) && validOption
+        ? clamp(value, setting.min, setting.max)
+        : settingValue(defaultGameConfig, setting);
   }
+  const curve = config.damagePopup.velocityCurve;
+  const defaultCurve = defaultGameConfig.damagePopup.velocityCurve;
+  curve.control1.x = Number.isFinite(curve.control1.x)
+    ? clamp(curve.control1.x, 0, 1)
+    : defaultCurve.control1.x;
+  curve.control1.y = Number.isFinite(curve.control1.y)
+    ? clamp(curve.control1.y, 0, 1)
+    : defaultCurve.control1.y;
+  curve.control2.x = Number.isFinite(curve.control2.x)
+    ? clamp(curve.control2.x, curve.control1.x, 1)
+    : defaultCurve.control2.x;
+  curve.control2.y = Number.isFinite(curve.control2.y)
+    ? clamp(curve.control2.y, 0, 1)
+    : defaultCurve.control2.y;
   config.simulation.tickRate = Math.round(config.simulation.tickRate);
   const positive = [
     config.simulation.maxFrameDeltaMs,

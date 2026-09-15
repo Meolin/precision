@@ -3,6 +3,7 @@ import { formatNumber, useTelemetry } from '../useTelemetry';
 
 export function HUD({ runtime }: { runtime: GameRuntime }) {
   const data = useTelemetry(runtime);
+  const shooter = data.units.find((unit) => unit.id === 1);
   const values = [
     { label: 'Угол ствола', value: formatNumber(data.angle, 1), unit: '°' },
     { label: 'Начальная скорость', value: formatNumber(data.velocity, 1), unit: 'm/s' },
@@ -17,10 +18,32 @@ export function HUD({ runtime }: { runtime: GameRuntime }) {
           {data.weaponPending ? ' · в очереди' : ''}
         </span>
         <span>
-          {data.cooldownRemaining > 0
-            ? `До выстрела ${formatNumber(data.cooldownRemaining, 1)} s`
-            : 'Готово к выстрелу'}
+          {!data.shooterAlive
+            ? 'Орудие уничтожено'
+            : data.cooldownRemaining > 0
+              ? `До выстрела ${formatNumber(data.cooldownRemaining, 1)} s`
+              : 'Готово к выстрелу'}
         </span>
+      </div>
+      <div className="combat-status" aria-label="Здоровье юнитов">
+        {data.units.map((unit) => (
+          <div key={unit.id}>
+            <span>
+              {unit.id === 1 ? 'Орудие' : 'Цель'} #{unit.id}
+            </span>
+            <strong>
+              {unit.alive
+                ? `${formatNumber(unit.health.current, 1)} / ${unit.health.max} HP`
+                : 'DESTROYED'}
+            </strong>
+            <meter
+              min={0}
+              max={unit.health.max}
+              value={unit.health.current}
+              aria-label={`Здоровье юнита ${unit.id}`}
+            />
+          </div>
+        ))}
       </div>
       <div className="hud" aria-label="Параметры выстрела">
         {values.map((item, index) => (
@@ -33,6 +56,20 @@ export function HUD({ runtime }: { runtime: GameRuntime }) {
           </div>
         ))}
       </div>
+      <p className="movement-status" aria-label="Движение орудия">
+        Позиция {formatNumber(shooter?.position.x ?? null, 1)} /{' '}
+        {formatNumber(shooter?.position.y ?? null, 1)} m{' · '}Цель X{' '}
+        {formatNumber(shooter?.movement?.targetX ?? null, 1)} m{' · '}
+        {formatNumber(shooter?.movement?.speedMetersPerSecond ?? null, 1)} m/s
+        {' · '}Склон {formatNumber(shooter?.movement?.slopeAngleDeg ?? null, 1)}°{' · '}
+        {!shooter?.alive
+          ? 'Уничтожено'
+          : shooter.movement?.blockedReason === 'slope'
+            ? 'Крутой склон'
+            : shooter.movement?.grounded
+              ? 'На земле'
+              : 'Нет опоры'}
+      </p>
     </>
   );
 }

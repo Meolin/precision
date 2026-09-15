@@ -7,6 +7,7 @@ import { weaponDefinitions } from '../game/weapons/weaponDefinitions';
 import { projectileDefinitions } from '../game/ballistics/projectileDefinitions';
 import { terrainMaterialDefinitions } from '../game/terrain/TerrainMaterialDefinition';
 import { penetrationChannelRadius } from '../game/impacts/resolveImpact';
+import { cloneUnit } from '../game/entities/UnitState';
 
 function readTelemetry(runtime: GameRuntime) {
   const state = runtime.getState();
@@ -19,6 +20,23 @@ function readTelemetry(runtime: GameRuntime) {
     ? terrainMaterialDefinitions[state.terrain.getMaterialAtWorldPosition(cursor)]
     : null;
   return {
+    units: state.units.map(cloneUnit),
+    activeUnits: state.units.filter((unit) => unit.alive).length,
+    shooterAlive: state.cannon.alive,
+    entityImpact: state.lastEntityImpact
+      ? {
+          ...state.lastEntityImpact,
+          position: { ...state.lastEntityImpact.position },
+          velocity: { ...state.lastEntityImpact.velocity },
+          surfaceNormal: { ...state.lastEntityImpact.surfaceNormal },
+        }
+      : null,
+    entityImpactProjectile: state.lastEntityImpact
+      ? projectileDefinitions[state.lastEntityImpact.projectileDefinitionId].name
+      : null,
+    entityImpactWeapon: state.lastEntityImpact
+      ? weaponDefinitions[state.lastEntityImpact.weaponId].name
+      : null,
     tick: state.tick,
     seconds: state.elapsedSeconds,
     seed: state.seed,

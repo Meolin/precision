@@ -621,3 +621,30 @@ h1 {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   row-gap: 1rem;
 }
+.combat-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 32px;
+  margin: 14px 0;
+  font-size: 12px;
+}
+.combat-status > div {
+  display: grid;
+  grid-template-columns: auto auto;
+  align-items: center;
+  gap: 6px 16px;
+}
+.combat-status strong {
+  color: var(--accent, #d5ec84);
+}
+.combat-status meter {
+  width: 100%;
+  height: 7px;
+  grid-column: 1 / -1;
+}
+.movement-status {
+  color: #a9b9b8;
+  font-size: 12px;
+  line-height: 1.6;
+  margin: 10px 0 16px;
+}
