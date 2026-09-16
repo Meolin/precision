@@ -4,11 +4,14 @@ import { muzzlePosition } from '../entities/Cannon';
 import { lerp } from '../math/Vec2';
 import type { DebugOptions } from './DebugOptions';
 import { TerrainLayer } from './TerrainLayer';
-import { fitWorld } from './viewport';
 import { hitboxCenter } from '../entities/Hitbox';
 import { DamagePopupLayer } from './DamagePopupLayer';
-import { calculateSurfaceNormal } from '../terrain/surfaceNormal';
+import { isInstallation } from '../entities/InstallationState';
+import type { RtsController } from '../client/RtsController';
 import cannonBaseUrl from '../assets/example_base.png';
+import { ScenePostProcessing } from './ScenePostProcessing';
+import type { ShaderSettings } from './ShaderSettings';
+import { MinimapRenderer } from './MinimapRenderer';
 
 // The source image is a 1448 × 1086 PNG. Its visible chassis ends at roughly
 // 78% of the image height, so this anchor places the tracks on the terrain.
@@ -27,14 +30,23 @@ const colors = {
 
 /** Imperative frame updates; React owns only this adapter's lifetime. */
 export class SceneRenderer {
+  private frame = new Container();
+  private frameMask = new Graphics();
+  private frameKey = '';
   private world = new Container();
+  private content = new Container();
+  private postProcessing: ScenePostProcessing;
   private background = new Graphics();
   private terrain = new TerrainLayer();
+  private minimap = new MinimapRenderer();
   private trajectory = new Graphics();
-  private cannonBase = new Sprite();
+  private cannonBases = new Container();
+  private baseSprites = new Map<number, Sprite>();
+  private baseTexture: Texture | null = null;
+  private selection = new Graphics();
+  private screenOverlay = new Graphics();
   private cannon = new Graphics();
   private units = new Graphics();
-  private projectiles = new Graphics();
   private debug = new Graphics();
   private labels = new Container();
   private damagePopups = new DamagePopupLayer();
@@ -46,35 +58,60 @@ export class SceneRenderer {
 
   constructor(private parent: Container) {
     void Assets.load<Texture>(cannonBaseUrl).then((texture) => {
-      if (!this.disposed) this.cannonBase.texture = texture;
+      if (!this.disposed) {
+        this.baseTexture = texture;
+        for (const sprite of this.baseSprites.values()) sprite.texture = texture;
+      }
     });
-    parent.addChild(this.world);
+    this.frame.addChild(this.world, this.screenOverlay);
+    parent.addChild(this.frame, this.frameMask, this.minimap.container);
+    this.frame.mask = this.frameMask;
+    this.content.addChild(this.background, this.terrain.sprite, this.cannonBases, this.cannon);
+    this.postProcessing = new ScenePostProcessing({
+      content: this.content,
+      background: this.background,
+      terrain: this.terrain.sprite,
+      cannonBases: this.cannonBases,
+    });
     this.world.addChild(
-      this.background,
-      this.terrain.sprite,
+      this.content,
       this.labels,
       this.trajectory,
-      this.cannonBase,
-      this.cannon,
       this.units,
-      this.projectiles,
+      this.selection,
       this.debug,
       this.damagePopups.container,
     );
   }
 
-  draw(runtime: GameRuntime, options: DebugOptions, width: number, height: number): void {
+  draw(
+    runtime: GameRuntime,
+    controls: RtsController,
+    options: DebugOptions,
+    shaders: ShaderSettings,
+    width: number,
+    height: number,
+  ): void {
     if (width <= 0 || height <= 0) return;
     const state = runtime.getState();
     const config = runtime.getConfig();
-    const viewport = fitWorld(width, height, config.world);
+    const viewport = controls.camera.getViewport(width, height);
     const ppm = viewport.pixelsPerMeter;
     const pixel = 1 / ppm;
+    const frameKey = `${viewport.frameX}:${viewport.frameY}:${viewport.width}:${viewport.height}`;
+    if (frameKey !== this.frameKey) {
+      this.frameKey = frameKey;
+      this.frameMask
+        .clear()
+        .rect(viewport.frameX, viewport.frameY, viewport.width, viewport.height)
+        .fill(0xffffff);
+    }
     this.world.position.set(viewport.offsetX, viewport.offsetY);
     this.world.scale.set(ppm);
     this.terrain.update(state.terrain);
+    this.minimap.draw(runtime, controls, this.terrain.sprite.texture, width, height);
     this.damagePopups.update(runtime.getDamagePopups(), runtime.presentationTimeSeconds, pixel);
-    const staticKey = `${width}:${height}:${config.world.widthMeters}:${config.world.heightMeters}:${options.grid}:${state.terrain.cellSizeMeters}`;
+    const staticKey = `${width}:${height}:${ppm}:${config.world.widthMeters}:${config.world.heightMeters}:${options.grid}:${state.terrain.cellSizeMeters}`;
     if (this.staticKey !== staticKey) {
       this.staticKey = staticKey;
       this.drawBackground(
@@ -86,7 +123,8 @@ export class SceneRenderer {
       this.previewKey = null;
     }
 
-    const preview = options.trajectory ? runtime.getTrajectoryPreview() : null;
+    const single = controls.getSingleInstallation();
+    const preview = options.trajectory && single ? runtime.getTrajectoryPreview(single.id) : null;
     if (preview !== this.previewKey || options.trajectory !== this.previewVisible) {
       this.previewKey = preview;
       this.previewVisible = options.trajectory;
@@ -113,50 +151,131 @@ export class SceneRenderer {
       }
     }
 
-    const requestedCannon = runtime.getRequestedCannon();
-    const { position, surfaceY } = requestedCannon;
-    const muzzle = muzzlePosition(requestedCannon, config);
-    if (this.cannonStateIdentity !== state.cannon) {
-      this.cannonStateIdentity = state.cannon;
-      this.cannonBase.rotation = 0;
-    }
-    this.cannonBase.anchor.set(0.5, cannonBaseGroundAnchor);
-    this.cannonBase.scale.set(cannonBaseWidthMeters / cannonBaseSourceWidth);
-    this.cannonBase.position.set(position.x, surfaceY);
-    this.cannonBase.alpha = requestedCannon.alive ? 1 : 0.3;
-    // Keep the initial pose horizontal. Once movement starts, align the hull
-    // with the terrain normal directly below the cannon and retain the last
-    // angle after the unit reaches its destination.
-    if (
-      requestedCannon.movement?.targetX !== null &&
-      requestedCannon.movement?.targetX !== undefined
-    ) {
-      const normal = calculateSurfaceNormal(
-        state.terrain,
-        { x: position.x, y: surfaceY },
-        // A downward probe velocity makes the utility's opposite-direction
-        // fallback point upward when the local terrain sample is degenerate.
-        { x: 0, y: 1 },
-      );
-      this.cannonBase.rotation = Math.atan2(normal.x, -normal.y);
-    }
     this.cannon.clear();
-    this.cannon.alpha = requestedCannon.alive ? 1 : 0.3;
-    this.cannon
-      .moveTo(position.x, position.y)
-      .lineTo(muzzle.x, muzzle.y)
-      .stroke({ color: 0x101719, width: 0.65, cap: 'round' });
-    this.cannon
-      .moveTo(position.x, position.y)
-      .lineTo(muzzle.x, muzzle.y)
-      .stroke({ color: colors.metal, width: 0.38, cap: 'round' });
-    this.cannon
-      .circle(position.x, position.y, 0.7)
-      .fill(0x4f6262)
-      .stroke({ color: colors.metal, width: pixel });
-    this.cannon.circle(position.x, position.y, 0.22).fill(colors.accent);
+    if (this.cannonStateIdentity !== state) {
+      this.cannonStateIdentity = state;
+      for (const sprite of this.baseSprites.values()) sprite.destroy();
+      this.baseSprites.clear();
+    }
+    for (const installation of state.units.filter(isInstallation)) {
+      const requested =
+        installation.ownerPlayerId === controls.playerId
+          ? runtime.getRequestedCannon(installation.id)
+          : installation;
+      const { position, surfaceY } = requested;
+      const muzzle = muzzlePosition(requested, config);
+      let sprite = this.baseSprites.get(installation.id);
+      if (!sprite) {
+        sprite = this.baseTexture ? new Sprite(this.baseTexture) : new Sprite();
+        this.baseSprites.set(installation.id, sprite);
+        this.cannonBases.addChild(sprite);
+      }
+      sprite.anchor.set(0.5, cannonBaseGroundAnchor);
+      sprite.scale.set(cannonBaseWidthMeters / cannonBaseSourceWidth);
+      sprite.position.set(position.x, surfaceY);
+      sprite.alpha = requested.alive ? 1 : 0.3;
+      sprite.tint = installation.ownerPlayerId === controls.playerId ? 0xffffff : 0xe4b49b;
+      const alpha = requested.alive ? 1 : 0.3;
+      this.cannon
+        .moveTo(position.x, position.y)
+        .lineTo(muzzle.x, muzzle.y)
+        .stroke({ color: 0x101719, width: 0.65, cap: 'round', alpha });
+      this.cannon
+        .moveTo(position.x, position.y)
+        .lineTo(muzzle.x, muzzle.y)
+        .stroke({ color: colors.metal, width: 0.38, cap: 'round', alpha });
+      this.cannon
+        .circle(position.x, position.y, 0.7)
+        .fill({ color: 0x4f6262, alpha })
+        .stroke({ color: colors.metal, width: pixel, alpha });
+      const weaponColor =
+        requested.weaponId === 'mortar'
+          ? 0x85d7e8
+          : requested.weaponId === 'heavyPenetrator'
+            ? 0xed85ac
+            : colors.accent;
+      this.cannon.circle(position.x, position.y, 0.22).fill({ color: weaponColor, alpha });
+    }
 
-    this.projectiles.clear();
+    this.selection.clear();
+    const selectedIds = controls.selection.selectedEntityIds;
+    const targetMarker = (x: number, y: number, color: number, alpha = 1) => {
+      const radius = 6 * pixel;
+      this.selection.circle(x, y, radius).stroke({ color, width: pixel, alpha });
+      this.selection
+        .moveTo(x - radius, y - radius)
+        .lineTo(x + radius, y + radius)
+        .moveTo(x - radius, y + radius)
+        .lineTo(x + radius, y - radius)
+        .stroke({ color, width: pixel, alpha });
+    };
+    for (const unit of state.units) {
+      if (!unit.alive) continue;
+      const selected = selectedIds.includes(unit.id);
+      const hovered = controls.selection.hoveredEntityId === unit.id;
+      const center = hitboxCenter(unit.position, unit.hitbox);
+      if (selected || hovered)
+        this.selection.circle(center.x, center.y, unit.hitbox.radiusMeters + 4 * pixel).stroke({
+          color: selected ? colors.accent : colors.orange,
+          width: (selected ? 2 : 1) * pixel,
+        });
+      if (!selected || !isInstallation(unit)) continue;
+      let previous = center;
+      for (const [index, order] of unit.orders.entries()) {
+        const targetUnit =
+          order.type === 'attackTarget'
+            ? state.units.find((item) => item.id === order.targetEntityId && item.alive)
+            : null;
+        const point =
+          order.type === 'attackGround'
+            ? order.targetPosition
+            : targetUnit
+              ? hitboxCenter(targetUnit.position, targetUnit.hitbox)
+              : null;
+        if (!point) continue;
+        const color = order.type === 'attackTarget' ? colors.orange : colors.accent;
+        this.selection
+          .moveTo(previous.x, previous.y)
+          .lineTo(point.x, point.y)
+          .stroke({ color, width: pixel, alpha: index === 0 ? 0.8 : 0.35 });
+        targetMarker(point.x, point.y, color, index === 0 ? 1 : 0.45);
+        previous = point;
+      }
+    }
+    if (controls.lastTarget) {
+      const liveTarget =
+        controls.lastTarget.entityId === undefined
+          ? null
+          : state.units.find((unit) => unit.id === controls.lastTarget?.entityId);
+      const point = liveTarget?.position ?? controls.lastTarget.position;
+      targetMarker(point.x, point.y, colors.orange, 0.8);
+    }
+    if (controls.inputMode === 'attackGround') {
+      const cursor = runtime.getCursorPosition();
+      if (cursor) {
+        const surface = state.terrain.findSurfaceY(cursor.x);
+        targetMarker(
+          cursor.x,
+          surface !== null && cursor.y >= surface ? surface : cursor.y,
+          colors.accent,
+        );
+      }
+    }
+    this.screenOverlay.clear();
+    if (controls.rectangle) {
+      const { start, current } = controls.rectangle;
+      this.screenOverlay
+        .rect(
+          Math.min(start.x, current.x),
+          Math.min(start.y, current.y),
+          Math.abs(current.x - start.x),
+          Math.abs(current.y - start.y),
+        )
+        .fill({ color: colors.accent, alpha: 0.1 })
+        .stroke({ color: colors.accent, width: 1 });
+    }
+
+    this.postProcessing.update(runtime, shaders, viewport, this.baseSprites, selectedIds);
     this.debug.clear();
     const lastExplosion = runtime.getLastExplosion();
     if (lastExplosion) {
@@ -188,21 +307,11 @@ export class SceneRenderer {
       }
     }
     this.units.clear();
-    const movementTarget = state.cannon.movement?.targetX;
-    if (options.movementTarget && state.cannon.alive && movementTarget != null) {
-      const targetY = state.terrain.findSurfaceY(movementTarget) ?? config.world.heightMeters;
-      this.debug
-        .moveTo(movementTarget, targetY)
-        .lineTo(movementTarget, targetY - 2.5)
-        .lineTo(movementTarget + 1.2, targetY - 2)
-        .lineTo(movementTarget, targetY - 1.5)
-        .stroke({ color: colors.accent, width: 1.5 * pixel });
-    }
     for (const unit of state.units) {
       const center = hitboxCenter(unit.position, unit.hitbox);
       const radius = unit.hitbox.radiusMeters;
-      const color = unit.teamId === 1 ? colors.accent : colors.orange;
-      if (unit.id !== state.cannon.id) {
+      const color = unit.ownerPlayerId === controls.playerId ? colors.accent : colors.orange;
+      if (!isInstallation(unit)) {
         this.units
           .circle(center.x, center.y, radius)
           .fill({ color: unit.alive ? 0x8a5740 : 0x343c3c, alpha: unit.alive ? 1 : 0.65 })
@@ -253,11 +362,6 @@ export class SceneRenderer {
         projectile.position,
         runtime.interpolationAlpha,
       );
-      const radius = Math.max(projectile.radius, 2.8 * pixel);
-      this.projectiles
-        .circle(point.x, point.y, radius + 3 * pixel)
-        .fill({ color: colors.orange, alpha: 0.14 });
-      this.projectiles.circle(point.x, point.y, radius).fill(0xffdfac);
       if (options.velocity) {
         const end = {
           x: point.x + projectile.velocity.x * 0.2,
@@ -346,7 +450,7 @@ export class SceneRenderer {
       this.labels.addChild(label);
     }
     const cannonLabel = new Text({
-      text: '01 / CANNON',
+      text: 'RTS / BATTERIES',
       style: { fontFamily: 'Consolas, monospace', fontSize: 10, fill: 0xa9b5aa, letterSpacing: 1 },
     });
     cannonLabel.scale.set(pixel);
@@ -356,9 +460,13 @@ export class SceneRenderer {
 
   destroy(): void {
     this.disposed = true;
+    this.postProcessing.destroy();
+    this.minimap.destroy();
     this.terrain.destroy();
     this.damagePopups.destroy();
-    this.parent.removeChild(this.world);
-    this.world.destroy({ children: true });
+    this.frame.mask = null;
+    this.parent.removeChild(this.frame, this.frameMask);
+    this.frameMask.destroy();
+    this.frame.destroy({ children: true });
   }
 }

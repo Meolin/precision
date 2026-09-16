@@ -18,7 +18,7 @@ export default tseslint.config(
   },
   {
     files: [
-      'src/game/{config,core,math,commands,entities,terrain,ballistics,weapons,impacts,explosions,collision,combat,movement,effects}/**/*.ts',
+      'src/game/{config,core,math,commands,orders,entities,terrain,ballistics,weapons,impacts,explosions,collision,combat,movement,effects}/**/*.ts',
     ],
     rules: {
       'no-restricted-imports': [
@@ -32,6 +32,7 @@ export default tseslint.config(
             '@pixi/*',
             '**/rendering/*',
             '**/input/*',
+            '**/client/*',
           ],
         },
       ],

@@ -26,6 +26,62 @@
 .panel-settings {
   padding: 0 22px;
 }
+.shader-group {
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
+}
+.shader-group > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  min-height: 30px;
+  cursor: pointer;
+  font-size: 11px;
+}
+.shader-group > summary::before {
+  content: '›';
+  color: var(--muted);
+}
+.shader-group[open] > summary::before {
+  content: '⌄';
+}
+.shader-group > summary > span:first-child {
+  flex: 1;
+}
+.shader-group > summary:focus-visible {
+  outline: 1px solid var(--accent);
+}
+.shader-status {
+  color: var(--dim);
+  font: 9px var(--mono);
+}
+.shader-status.is-on {
+  color: var(--accent);
+}
+.shader-color {
+  width: 48px;
+  height: 28px;
+  background: transparent;
+  border: 1px solid var(--border);
+}
+.shader-reset,
+.camera-reset {
+  width: 100%;
+  padding: 8px;
+  margin: 8px 0 14px;
+  background: #101618;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+.shader-reset:hover,
+.camera-reset:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
 .settings-note {
   color: var(--dim);
   font-size: 10px;

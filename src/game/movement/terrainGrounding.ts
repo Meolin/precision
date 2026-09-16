@@ -2,6 +2,7 @@ import type { UnitState } from '../entities/UnitState';
 import type { Vec2 } from '../math/Vec2';
 import { clamp } from '../math/Vec2';
 import type { TerrainGrid } from '../terrain/TerrainGrid';
+import { isInstallation } from '../entities/InstallationState';
 
 /** Interpolate column-center heights so a one-cell stair does not become a
  * vertical slope merely because speed * dt is smaller than one cell. */
@@ -54,6 +55,14 @@ export function queryUnitGrounding(
 }
 
 export function refreshUnitGrounding(unit: UnitState, terrain: TerrainGrid): void {
+  if (isInstallation(unit)) {
+    if (!unit.alive || unit.grounding.terrainVersion === terrain.version) return;
+    const grounding = queryUnitGrounding(terrain, unit, unit.position.x);
+    unit.position = grounding.position;
+    unit.grounding = { terrainVersion: terrain.version, grounded: grounding.grounded };
+    unit.surfaceY = unit.position.y + (unit.hitbox.offset?.y ?? 0) + unit.hitbox.radiusMeters;
+    return;
+  }
   if (!unit.alive || !unit.movement || unit.movement.terrainVersion === terrain.version) return;
   const grounding = queryUnitGrounding(terrain, unit, unit.position.x);
   unit.position = grounding.position;

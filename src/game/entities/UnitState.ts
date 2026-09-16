@@ -3,13 +3,19 @@ import type { TerrainGrid } from '../terrain/TerrainGrid';
 import type { HealthState } from './HealthState';
 import type { Hitbox } from './Hitbox';
 import { createMovementState, type UnitMovementState } from '../movement/UnitMovementState';
+import { isInstallation } from './InstallationState';
+import { cloneOrder } from '../orders/InstallationOrder';
 
 export type TeamId = number;
+export type PlayerId = number;
 
 /** Simulation owns units. CannonState extends this with its existing weapon controls. */
 export interface UnitState {
   id: EntityId;
   teamId: TeamId;
+  ownerPlayerId?: PlayerId;
+  kind?: 'installation' | 'drone';
+  mobilityType?: 'stationary' | 'air';
   position: Vec2;
   health: HealthState;
   hitbox: Hitbox;
@@ -25,6 +31,7 @@ export function spawnTarget(terrain: TerrainGrid, id: EntityId): UnitState {
   return {
     id,
     teamId: 2,
+    ownerPlayerId: 2,
     position: { x, y: surfaceY - radiusMeters },
     health: { current: 100, max: 100 },
     hitbox: { type: 'circle', radiusMeters },
@@ -39,6 +46,17 @@ export function cloneUnit<T extends UnitState>(unit: T): T {
     position: { ...unit.position },
     health: { ...unit.health },
     ...(unit.movement ? { movement: { ...unit.movement } } : {}),
+    ...(isInstallation(unit)
+      ? {
+          availableWeaponIds: [...unit.availableWeaponIds],
+          orders: unit.orders.map(cloneOrder),
+          grounding: { ...unit.grounding },
+          fireControl: {
+            ...unit.fireControl,
+            lastSolution: unit.fireControl.lastSolution ? { ...unit.fireControl.lastSolution } : null,
+          },
+        }
+      : {}),
     hitbox: {
       ...unit.hitbox,
       ...(unit.hitbox.offset ? { offset: { ...unit.hitbox.offset } } : {}),

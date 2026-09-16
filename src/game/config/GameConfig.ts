@@ -10,6 +10,16 @@ export interface GameConfig {
   simulation: { tickRate: number; maxFrameDeltaMs: number };
   world: { widthMeters: number; heightMeters: number; pixelsPerMeter: number };
   physics: { gravity: number; windAcceleration: number; airDrag: number };
+  rts: {
+    installationsPerPlayer: number;
+    maxOrders: number;
+    solverAngleStepDeg: number;
+    solverRefinements: number;
+    solverToleranceMeters: number;
+    solverMaxSeconds: number;
+    solverMaxTicksPerCandidate: number;
+  };
+  /** Legacy movement fixtures only; installations never have locomotion. */
   movement: { speedMetersPerSecond: number; maxSlopeAngleDeg: number };
   damagePopup: {
     initialSpeedMultiplier: number;

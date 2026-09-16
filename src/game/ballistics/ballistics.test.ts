@@ -92,7 +92,7 @@ describe('projectile physics', () => {
     const config = cloneConfig();
     const terrain = new TerrainGrid(600, 320, 0.2);
     const shell = projectile();
-    shell.position.x = 121;
+    shell.position.x = config.world.widthMeters + 1;
     advanceProjectile(shell, terrain, config, 1 / 60);
     expect(shell.alive).toBe(false);
     const expired = projectile();

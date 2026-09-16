@@ -14,11 +14,16 @@ import { GameCanvas } from '../game/rendering/GameCanvas';
 import { FlightTelemetry, HUD, SceneStatus } from '../ui/HUD/HUD';
 import { TechnicalPanel } from '../ui/TechnicalPanel/TechnicalPanel';
 import './App.css';
+import { RtsController } from '../game/client/RtsController';
+import { SelectionPanel } from '../ui/SelectionPanel/SelectionPanel';
+import { createShaderSettings } from '../game/rendering/ShaderSettings';
 
 export function App({ runtime }: { runtime: GameRuntime }) {
+  const [controls] = useState(() => new RtsController(runtime));
   const [config, setConfig] = useState(() => runtime.getConfig());
   const [paused, setPaused] = useState(runtime.isPaused());
   const [debug, setDebug] = useState<DebugOptions>({ ...defaultDebugOptions });
+  const [shaders, setShaders] = useState(createShaderSettings);
   const togglePause = useCallback(() => {
     runtime.setPaused(!runtime.isPaused());
     setPaused(runtime.isPaused());
@@ -50,7 +55,7 @@ export function App({ runtime }: { runtime: GameRuntime }) {
             BALLISTICS<span className="brand-divider">/</span>
             <b>LAB</b>
           </span>
-          <span className="version-badge">STEP 6</span>
+          <span className="version-badge">STEP 7</span>
         </div>
         <span className="header-note">
           <span className="status-dot" />
@@ -61,16 +66,16 @@ export function App({ runtime }: { runtime: GameRuntime }) {
         <div className="workspace-main">
           <div className="title-row">
             <div>
-              <span className="eyebrow">2D PHYSICS SANDBOX</span>
+              <span className="eyebrow">RTS ARTILLERY COMMAND</span>
               <h1>Баллистический полигон</h1>
-              <p>Выберите позицию. Наведите орудие. Поразите цель.</p>
+              <p>Выделите батарею. Назначьте цели. Задайте очередь выстрелов.</p>
             </div>
             <span className="coordinate-note">
               +x →<br />
               +y ↓
             </span>
           </div>
-          <HUD runtime={runtime} />
+          <HUD runtime={runtime} controls={controls} />
           <section className="range-panel" aria-label="Игровая сцена">
             <div className="range-toolbar">
               <div className="range-title">
@@ -96,7 +101,9 @@ export function App({ runtime }: { runtime: GameRuntime }) {
               </div>
             </div>
             <GameCanvas
+              shaders={shaders}
               runtime={runtime}
+              controls={controls}
               debug={debug}
               onPause={togglePause}
               onReset={resetScene}
@@ -127,26 +134,51 @@ export function App({ runtime }: { runtime: GameRuntime }) {
             </div>
             <SceneStatus runtime={runtime} />
           </section>
+          <SelectionPanel runtime={runtime} controls={controls} />
           <FlightTelemetry runtime={runtime} />
           <div className="controls-bar" id="game-controls">
             <span>
-              <kbd>ПКМ</kbd> движение
+              <kbd>ПКМ</kbd> атака противника
             </span>
             <span>
-              <kbd>Мышь</kbd> прицел
+              <kbd>ЛКМ</kbd> выделение / рамка
             </span>
             <span>
-              <kbd>ЛКМ</kbd>
-              <kbd>Space</kbd> выстрел
+              <kbd>Space</kbd> ручной выстрел
             </span>
             <span>
               <kbd>A</kbd>
-              <kbd>D</kbd> угол
+              огонь по точке
             </span>
             <span>
-              <kbd>1</kbd>
-              <kbd>2</kbd>
-              <kbd>3</kbd> оружие
+              <kbd>Q / W / E</kbd> оружие
+            </span>
+            <span>
+              <kbd>Ctrl + 1…9</kbd> сохранить группу
+            </span>
+            <span>
+              <kbd>1…9</kbd> выбрать группу
+            </span>
+            <span>
+              <kbd>Shift</kbd> очередь / добавить выделение
+            </span>
+            <span>
+              <kbd>S</kbd> стоп <kbd>Esc</kbd> отмена
+            </span>
+            <span>
+              <kbd>↑ ↓ ← →</kbd> камера
+            </span>
+            <span>
+              <kbd>СКМ / Alt + ЛКМ</kbd> двигать карту
+            </span>
+            <span>
+              <kbd>Колесо</kbd> зум
+            </span>
+            <span>
+              <kbd>ЛКМ на миникарте</kbd> перейти / перетащить камеру
+            </span>
+            <span>
+              <kbd>Мышь / Shift + ← →</kbd> ручной прицел
             </span>
             <span>
               <kbd>P</kbd> пауза
@@ -162,7 +194,10 @@ export function App({ runtime }: { runtime: GameRuntime }) {
           </p>
         </div>
         <TechnicalPanel
+          shaders={shaders}
+          onShaders={setShaders}
           runtime={runtime}
+          controls={controls}
           config={config}
           debug={debug}
           paused={paused}
@@ -183,7 +218,11 @@ export function App({ runtime }: { runtime: GameRuntime }) {
           onPause={togglePause}
           onStep={() => runtime.step()}
           onReset={resetScene}
-          onResetSettings={() => setConfig(runtime.resetSettings())}
+          onResetSettings={() => {
+            setConfig(runtime.resetSettings());
+            setShaders(createShaderSettings());
+            controls.camera.setZoom(1);
+          }}
         />
       </main>
       <footer className="app-footer">

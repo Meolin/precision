@@ -7,7 +7,6 @@ export interface DebugOptions {
   penetration: boolean;
   surfaceNormals: boolean;
   entityHitboxes: boolean;
-  movementTarget: boolean;
   explosionRadius: boolean;
   explosionOcclusion: boolean;
 }
@@ -20,7 +19,6 @@ export const defaultDebugOptions: DebugOptions = {
   penetration: false,
   surfaceNormals: false,
   entityHitboxes: false,
-  movementTarget: true,
   explosionRadius: true,
   explosionOcclusion: false,
 };

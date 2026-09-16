@@ -4,10 +4,22 @@ import { useCallback, useEffect, useRef } from 'react';
 import type { GameRuntime } from '../core/GameRuntime';
 import type { DebugOptions } from './DebugOptions';
 import { SceneRenderer } from './SceneRenderer';
+import type { RtsController } from '../client/RtsController';
+import type { ShaderSettings } from './ShaderSettings';
 
 extend({ Container });
 
-export function GameScene({ runtime, debug }: { runtime: GameRuntime; debug: DebugOptions }) {
+export function GameScene({
+  runtime,
+  controls,
+  debug,
+  shaders,
+}: {
+  runtime: GameRuntime;
+  controls: RtsController;
+  debug: DebugOptions;
+  shaders: ShaderSettings;
+}) {
   const { app } = useApplication();
   const root = useRef<Container>(null);
   const renderer = useRef<SceneRenderer | null>(null);
@@ -24,9 +36,18 @@ export function GameScene({ runtime, debug }: { runtime: GameRuntime; debug: Deb
   const frame = useCallback(
     (ticker: Ticker) => {
       runtime.advance(ticker.elapsedMS);
-      renderer.current?.draw(runtime, debug, app.screen.width, app.screen.height);
+      controls.sync();
+      controls.camera.update(ticker.elapsedMS);
+      renderer.current?.draw(
+        runtime,
+        controls,
+        debug,
+        shaders,
+        app.screen.width,
+        app.screen.height,
+      );
     },
-    [app, runtime, debug],
+    [app, runtime, controls, debug, shaders],
   );
   useTick(frame);
   return <pixiContainer ref={root} />;

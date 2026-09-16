@@ -1,11 +1,25 @@
 import { clamp } from '../math/Vec2';
 import { validateWeaponOverrides } from '../weapons/WeaponSettings';
 import { numericSettings, settingValue, type GameConfig, type NumericSetting } from './GameConfig';
+import { cameraFrame, mapWidthInCameras } from './worldLayout';
 
 export const defaultGameConfig: GameConfig = {
   simulation: { tickRate: 60, maxFrameDeltaMs: 250 },
-  world: { widthMeters: 120, heightMeters: 64, pixelsPerMeter: 20 },
+  world: {
+    widthMeters: cameraFrame.widthMeters * mapWidthInCameras,
+    heightMeters: cameraFrame.heightMeters,
+    pixelsPerMeter: 20,
+  },
   physics: { gravity: 9.81, windAcceleration: 0, airDrag: 0 },
+  rts: {
+    installationsPerPlayer: 4,
+    maxOrders: 24,
+    solverAngleStepDeg: 2,
+    solverRefinements: 3,
+    solverToleranceMeters: 1,
+    solverMaxSeconds: 20,
+    solverMaxTicksPerCandidate: 4800,
+  },
   movement: { speedMetersPerSecond: 4, maxSlopeAngleDeg: 45 },
   damagePopup: {
     initialSpeedMultiplier: 1,
@@ -41,6 +55,7 @@ export function cloneConfig(config: GameConfig = defaultGameConfig): GameConfig 
     simulation: { ...config.simulation },
     world: { ...config.world },
     physics: { ...config.physics },
+    rts: { ...defaultGameConfig.rts, ...config.rts },
     movement: { ...config.movement },
     damagePopup: {
       ...defaultGameConfig.damagePopup,
@@ -100,6 +115,25 @@ export function withDamagePopupCurve(
 export function validateConfig(input: GameConfig): GameConfig {
   const config = cloneConfig(input);
   config.weaponOverrides = validateWeaponOverrides(config.weaponOverrides);
+  const rtsBounds: Record<keyof GameConfig['rts'], [number, number]> = {
+    installationsPerPlayer: [1, 5],
+    maxOrders: [1, 32],
+    solverAngleStepDeg: [0.5, 10],
+    solverRefinements: [0, 5],
+    solverToleranceMeters: [0.1, 3],
+    solverMaxSeconds: [1, 30],
+    solverMaxTicksPerCandidate: [60, 7200],
+  };
+  for (const key of Object.keys(rtsBounds) as (keyof GameConfig['rts'])[]) {
+    const [min, max] = rtsBounds[key];
+    config.rts[key] = Number.isFinite(config.rts[key])
+      ? clamp(config.rts[key], min, max)
+      : defaultGameConfig.rts[key];
+  }
+  config.rts.installationsPerPlayer = Math.round(config.rts.installationsPerPlayer);
+  config.rts.maxOrders = Math.round(config.rts.maxOrders);
+  config.rts.solverRefinements = Math.round(config.rts.solverRefinements);
+  config.rts.solverMaxTicksPerCandidate = Math.round(config.rts.solverMaxTicksPerCandidate);
   for (const setting of numericSettings) {
     const value = settingValue(config, setting);
     const group = config[setting.section] as unknown as Record<string, number>;

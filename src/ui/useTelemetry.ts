@@ -8,11 +8,17 @@ import { projectileDefinitions } from '../game/ballistics/projectileDefinitions'
 import { terrainMaterialDefinitions } from '../game/terrain/TerrainMaterialDefinition';
 import { penetrationChannelRadius } from '../game/impacts/resolveImpact';
 import { cloneUnit } from '../game/entities/UnitState';
+import type { RtsController } from '../game/client/RtsController';
+import { isInstallation } from '../game/entities/InstallationState';
 
-function readTelemetry(runtime: GameRuntime) {
+function readTelemetry(runtime: GameRuntime, controls?: RtsController) {
   const state = runtime.getState();
   const config = runtime.getConfig();
-  const cannon = runtime.getRequestedCannon();
+  const selected = controls?.getSelectedInstallations() ?? [];
+  const single = controls?.getSingleInstallation();
+  const cannon = runtime.getRequestedCannon(single?.id ?? selected[0]?.id);
+  const selectedInstallations = selected.map((unit) => runtime.getRequestedCannon(unit.id));
+  const selectedWeaponIds = new Set(selectedInstallations.map((unit) => unit.weaponId));
   const { weapon, projectile: definition, impact } = resolveWeapon(config, cannon.weaponId);
   const projectile = state.projectiles.at(-1);
   const cursor = runtime.getCursorPosition();
@@ -20,12 +26,22 @@ function readTelemetry(runtime: GameRuntime) {
     ? terrainMaterialDefinitions[state.terrain.getMaterialAtWorldPosition(cursor)]
     : null;
   return {
+    selectedInstallations,
+    selectedIds: [...(controls?.selection.selectedEntityIds ?? [])],
+    singleSelectionId: single?.id ?? null,
+    selectionWeaponId: selectedWeaponIds.size === 1 ? selectedInstallations[0]?.weaponId ?? null : null,
+    mixedWeapons: selectedWeaponIds.size > 1,
+    inputMode: controls?.inputMode ?? 'default',
+    queueTargeting: controls?.queueTargeting ?? false,
+    controlGroups: Object.fromEntries(Object.entries(controls?.controlGroups ?? {}).map(([key, ids]) => [key, [...(ids ?? [])]])),
+    hoveredUnit: state.units.find((unit) => unit.id === controls?.selection.hoveredEntityId),
+    inspectedEntityId: controls?.inspectedEntityId ?? null,
     explosionEnabled: Boolean(impact.explosion),
     explosionSettings: explosionSettingValues(config, cannon.weaponId),
     lastExplosion: runtime.getLastExplosion(),
     units: state.units.map(cloneUnit),
     activeUnits: state.units.filter((unit) => unit.alive).length,
-    shooterAlive: state.cannon.alive,
+    shooterAlive: cannon.alive,
     entityImpact: state.lastEntityImpact
       ? {
           ...state.lastEntityImpact,
@@ -89,8 +105,8 @@ function readTelemetry(runtime: GameRuntime) {
     weaponId: weapon.id,
     weaponName: weapon.name,
     projectileName: definition.name,
-    weaponPending: weapon.id !== state.cannon.weaponId,
-    cooldownRemaining: Math.max(0, state.cannon.nextFireTimeSeconds - state.elapsedSeconds),
+    weaponPending: weapon.id !== state.units.filter(isInstallation).find((unit) => unit.id === cannon.id)?.weaponId,
+    cooldownRemaining: Math.max(0, cannon.nextFireTimeSeconds - state.elapsedSeconds),
     velocity: weapon.muzzleVelocity,
     mass: definition.massKg,
     muzzleEnergy: calculateKineticEnergy(definition.massKg, { x: weapon.muzzleVelocity, y: 0 }),
@@ -100,12 +116,12 @@ function readTelemetry(runtime: GameRuntime) {
 }
 
 /** Sample compact HUD data at 10 Hz, including the last impact's debug coordinates. */
-export function useTelemetry(runtime: GameRuntime) {
-  const [telemetry, setTelemetry] = useState(() => readTelemetry(runtime));
+export function useTelemetry(runtime: GameRuntime, controls?: RtsController) {
+  const [telemetry, setTelemetry] = useState(() => readTelemetry(runtime, controls));
   useEffect(() => {
-    const timer = window.setInterval(() => setTelemetry(readTelemetry(runtime)), 100);
+    const timer = window.setInterval(() => setTelemetry(readTelemetry(runtime, controls)), 100);
     return () => window.clearInterval(timer);
-  }, [runtime]);
+  }, [runtime, controls]);
   return telemetry;
 }
 

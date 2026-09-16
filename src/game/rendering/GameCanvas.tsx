@@ -1,27 +1,32 @@
 import { Application, type ApplicationRef } from '@pixi/react';
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Application as PixiApplication } from 'pixi.js';
 import type { GameRuntime } from '../core/GameRuntime';
 import { useGameInput } from '../input/useGameInput';
 import type { DebugOptions } from './DebugOptions';
 import { GameScene } from './GameScene';
+import type { RtsController } from '../client/RtsController';
+import type { ShaderSettings } from './ShaderSettings';
 
 interface Props {
   runtime: GameRuntime;
+  controls: RtsController;
   debug: DebugOptions;
+  shaders: ShaderSettings;
   onPause: () => void;
   onReset: () => void;
 }
 
-export function GameCanvas({ runtime, debug, onPause, onReset }: Props) {
+export function GameCanvas({ runtime, controls, debug, shaders, onPause, onReset }: Props) {
   const surface = useRef<HTMLDivElement>(null);
   const application = useRef<ApplicationRef>(null);
+  const [fps, setFps] = useState(0);
   const resize = useCallback((app: PixiApplication) => {
     const element = surface.current;
     if (element)
       app.renderer.resize(Math.max(1, element.clientWidth), Math.max(1, element.clientHeight));
   }, []);
-  useGameInput(surface, runtime, onPause, onReset);
+  useGameInput(surface, runtime, controls, onPause, onReset);
   useEffect(() => {
     if (!surface.current) return;
     const observer = new ResizeObserver(() => {
@@ -31,6 +36,23 @@ export function GameCanvas({ runtime, debug, onPause, onReset }: Props) {
     observer.observe(surface.current);
     return () => observer.disconnect();
   }, [resize]);
+  useEffect(() => {
+    let frameCount = 0;
+    let lastSample = performance.now();
+    let animationFrame = 0;
+    const measure = (now: number) => {
+      frameCount += 1;
+      const elapsed = now - lastSample;
+      if (elapsed >= 500) {
+        setFps(Math.round((frameCount * 1000) / elapsed));
+        frameCount = 0;
+        lastSample = now;
+      }
+      animationFrame = requestAnimationFrame(measure);
+    };
+    animationFrame = requestAnimationFrame(measure);
+    return () => cancelAnimationFrame(animationFrame);
+  }, []);
 
   return (
     <div
@@ -41,6 +63,9 @@ export function GameCanvas({ runtime, debug, onPause, onReset }: Props) {
       aria-label="Баллистический полигон"
       aria-describedby="game-controls"
     >
+      <output className="fps-counter" aria-label={`Частота кадров: ${fps} FPS`}>
+        {fps} FPS
+      </output>
       <Application
         ref={application}
         onInit={resize}
@@ -51,7 +76,7 @@ export function GameCanvas({ runtime, debug, onPause, onReset }: Props) {
         resolution={Math.min(window.devicePixelRatio || 1, 2)}
         preference="webgl"
       >
-        <GameScene runtime={runtime} debug={debug} />
+        <GameScene runtime={runtime} controls={controls} debug={debug} shaders={shaders} />
       </Application>
     </div>
   );

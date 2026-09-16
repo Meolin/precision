@@ -15,7 +15,8 @@ import { applyRicochetContinuation } from '../impacts/ricochetContinuation';
 import { createEntityImpactEvent } from '../combat/EntityImpactEvent';
 import { resolveEntityDamage } from '../combat/resolveEntityDamage';
 import { applyEntityDamage } from '../combat/applyEntityDamage';
-import { updateUnitMovement } from '../movement/updateUnitMovement';
+import { updateInstallationOrders } from '../orders/updateInstallationOrders';
+import { isInstallation } from '../entities/InstallationState';
 import { refreshUnitGrounding } from '../movement/terrainGrounding';
 import { createExplosionEvent, type ExplosionEvent } from '../explosions/ExplosionEvent';
 import { resolveExplosion } from '../explosions/resolveExplosion';
@@ -28,14 +29,10 @@ export function stepSimulation(
   samples?: Vec2[],
 ): void {
   state.events = [];
-  // Ground before queued fire commands; move before projectile collision queries.
+  // Support correction precedes aiming and firing; installations never move horizontally.
   for (const unit of state.units) refreshUnitGrounding(unit, state.terrain);
-  if (state.cannon.movement)
-    state.cannon.surfaceY = state.cannon.position.y + state.cannon.hitbox.radiusMeters;
   for (const command of commands) executeCommand(state, config, command);
-  for (const unit of state.units) updateUnitMovement(unit, state.terrain, config.movement, dt);
-  if (state.cannon.movement)
-    state.cannon.surfaceY = state.cannon.position.y + state.cannon.hitbox.radiusMeters;
+  updateInstallationOrders(state, config);
   for (const projectile of state.projectiles) {
     if (!projectile.alive) continue;
     if (projectile.penetrationState) {
@@ -231,8 +228,12 @@ export function stepSimulation(
   state.projectiles = state.projectiles.filter((projectile) => projectile.alive);
   // Craters/channels from this tick also ground stationary targets immediately.
   for (const unit of state.units) refreshUnitGrounding(unit, state.terrain);
-  if (state.cannon.movement)
-    state.cannon.surfaceY = state.cannon.position.y + state.cannon.hitbox.radiusMeters;
+  for (const installation of state.units.filter(isInstallation)) {
+    if (!installation.alive) {
+      installation.orders.length = 0;
+      installation.fireControl.status = 'idle';
+    }
+  }
   state.tick++;
   state.elapsedSeconds += dt;
 }

@@ -12,6 +12,13 @@ import type { PenetrationSegment } from '../impacts/PenetrationResult';
 import { createDamagePopup, type DamagePopup } from '../effects/DamagePopup';
 import { hitboxCenter } from '../entities/Hitbox';
 import type { ExplosionResolvedEvent } from '../explosions/resolveExplosion';
+import { isInstallation } from '../entities/InstallationState';
+import { cloneUnit } from '../entities/UnitState';
+
+export interface RecentExplosion {
+  event: ExplosionResolvedEvent;
+  timeSeconds: number;
+}
 
 export class GameRuntime {
   private state: GameState;
@@ -29,6 +36,7 @@ export class GameRuntime {
   private damagePopups: DamagePopup[] = [];
   private presentationSeconds = 0;
   private lastExplosion: ExplosionResolvedEvent | null = null;
+  private recentExplosions: RecentExplosion[] = [];
 
   constructor(config: GameConfig = defaultGameConfig, seed = 12345) {
     this.config = validateConfig(config);
@@ -43,6 +51,10 @@ export class GameRuntime {
   }
   getLastExplosion(): Readonly<ExplosionResolvedEvent> | null {
     return this.lastExplosion;
+  }
+  /** Retain every explosion across catch-up ticks for presentation effects. */
+  getRecentExplosions(): readonly RecentExplosion[] {
+    return this.recentExplosions;
   }
   /** Fractional simulation time for effects, frozen on pause and cleared on reset. */
   get presentationTimeSeconds(): number {
@@ -64,11 +76,12 @@ export class GameRuntime {
   get pendingCommands(): number {
     return this.commands.length;
   }
-  getRequestedAim(): number {
-    return this.getRequestedCannon().angleRad;
+  getRequestedAim(entityId = this.state.cannon.id): number {
+    return this.getRequestedCannon(entityId).angleRad;
   }
-  getRequestedCannon() {
-    const cannon = { ...this.state.cannon, position: { ...this.state.cannon.position } };
+  getRequestedCannon(entityId = this.state.cannon.id) {
+    const unit = this.state.units.find((candidate) => candidate.id === entityId);
+    const cannon = cloneUnit(unit && isInstallation(unit) ? unit : this.state.cannon);
     for (const command of this.commands) applyCannonCommand(cannon, this.config, command);
     return cannon;
   }
@@ -78,9 +91,21 @@ export class GameRuntime {
 
   enqueueCommand(command: GameCommand): void {
     const last = this.commands.at(-1);
-    if (command.type === 'setAim' && last?.type === 'setAim' && last.cannonId === command.cannonId)
+    if (
+      command.type === 'setAim' &&
+      last?.type === 'setAim' &&
+      last.cannonId === command.cannonId &&
+      last.playerId === command.playerId
+    )
       this.commands[this.commands.length - 1] = { ...command };
-    else this.commands.push({ ...command });
+    else
+      this.commands.push({
+        ...command,
+        ...('entityIds' in command ? { entityIds: [...command.entityIds] } : {}),
+        ...(command.type === 'attackGround'
+          ? { targetPosition: { ...command.targetPosition } }
+          : {}),
+      });
   }
 
   private tick = (): void => {
@@ -94,8 +119,15 @@ export class GameRuntime {
     );
     this.presentationSeconds = Math.max(this.presentationSeconds, this.state.elapsedSeconds);
     this.captureDamagePopups();
-    for (const event of this.state.events)
-      if (event.type === 'explosionResolved') this.lastExplosion = event;
+    this.recentExplosions = this.recentExplosions.filter(
+      (item) => this.presentationSeconds - item.timeSeconds < 5,
+    );
+    for (const event of this.state.events) {
+      if (event.type !== 'explosionResolved') continue;
+      this.lastExplosion = event;
+      this.recentExplosions.push({ event, timeSeconds: this.state.elapsedSeconds });
+    }
+    this.recentExplosions = this.recentExplosions.slice(-32);
     if (!this.recordPenetrationPaths) this.penetrationPath = null;
     else {
       for (const event of this.state.events)
@@ -191,6 +223,7 @@ export class GameRuntime {
     this.cursorPosition = null;
     this.damagePopups = [];
     this.lastExplosion = null;
+    this.recentExplosions = [];
     this.presentationSeconds = 0;
     this.clock.reset();
     this.preview = null;
@@ -207,11 +240,10 @@ export class GameRuntime {
       validated.world.heightMeters !== this.config.world.heightMeters ||
       validated.terrain.cellSizeMeters !== this.config.terrain.cellSizeMeters ||
       validated.terrain.rockDepthMeters !== this.config.terrain.rockDepthMeters ||
-      validated.terrain.rockVariationMeters !== this.config.terrain.rockVariationMeters;
+      validated.terrain.rockVariationMeters !== this.config.terrain.rockVariationMeters ||
+      validated.rts.installationsPerPlayer !== this.config.rts.installationsPerPlayer;
     if (validated.simulation.tickRate !== this.config.simulation.tickRate) this.clock.reset();
     this.config = validated;
-    if (this.state.cannon.movement)
-      this.state.cannon.movement.speedMetersPerSecond = validated.movement.speedMetersPerSecond;
     this.configRevision++;
     if (resize) this.reset();
     return this.config;
@@ -221,15 +253,15 @@ export class GameRuntime {
     return this.updateConfig(defaultGameConfig);
   }
 
-  getTrajectoryPreview(): TrajectoryPreview {
-    const cannon = this.getRequestedCannon();
+  getTrajectoryPreview(entityId = this.state.cannon.id): TrajectoryPreview {
+    const cannon = this.getRequestedCannon(entityId);
     const unitsKey = this.state.units
       .map(
         (unit) =>
           `${unit.id}:${unit.alive}:${unit.position.x}:${unit.position.y}:${unit.hitbox.radiusMeters}:${unit.hitbox.offset?.x ?? 0}:${unit.hitbox.offset?.y ?? 0}`,
       )
       .join('|');
-    const key = `${this.configRevision}:${this.state.terrain.version}:${cannon.weaponId}:${cannon.angleRad}:${cannon.position.x}:${cannon.position.y}:${unitsKey}`;
+    const key = `${cannon.id}:${cannon.alive}:${this.configRevision}:${this.state.terrain.version}:${cannon.weaponId}:${cannon.angleRad}:${cannon.position.x}:${cannon.position.y}:${unitsKey}`;
     if (this.preview?.key !== key)
       this.preview = {
         key,

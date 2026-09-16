@@ -10,7 +10,7 @@ export function updateUnitMovement(
   config: GameConfig['movement'],
   dt: number,
 ): void {
-  if (!unit.alive || !unit.movement) return;
+  if (!unit.alive || unit.mobilityType === 'stationary' || !unit.movement) return;
   refreshUnitGrounding(unit, terrain);
   const movement = unit.movement;
   if (movement.targetX === null || !Number.isFinite(dt) || dt <= 0) return;

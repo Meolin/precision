@@ -49,11 +49,11 @@ describe('game runtime', () => {
     runtime.enqueueCommand({ type: 'setAim', cannonId: 2, angleRad: 0 });
     runtime.enqueueCommand({ type: 'fire', cannonId: 2 });
     runtime.advance(1000 / 60);
-    expect(runtime.getState().cannon.angleRad).toBeCloseTo(toRadians(85));
+    expect(runtime.getState().cannon.angleRad).toBeCloseTo(toRadians(175));
     expect(runtime.getState().shotsFired).toBe(0);
     runtime.enqueueCommand({ type: 'setAim', cannonId: 1, angleRad: Number.NaN });
     runtime.advance(1000 / 60);
-    expect(runtime.getState().cannon.angleRad).toBeCloseTo(toRadians(85));
+    expect(runtime.getState().cannon.angleRad).toBeCloseTo(toRadians(175));
   });
 
   it('pauses without accumulating time and steps exactly one tick', () => {
@@ -162,6 +162,6 @@ describe('game runtime', () => {
     runtime.enqueueCommand({ type: 'fire', cannonId: 1 });
     runtime.advance(1000 / 60);
     expect(runtime.getState().projectiles.map((shell) => shell.massKg)).toEqual([5, 10]);
-    expect(runtime.getState().projectiles.map((shell) => shell.id)).toEqual([3, 4]);
+    expect(runtime.getState().projectiles.map((shell) => shell.id)).toEqual([9, 10]);
   });
 });

@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useState, useSyncExternalStore, type ReactNode } from 'react';
 import {
   numericSettings,
   settingValue,
@@ -18,11 +18,20 @@ import {
 } from '../../game/weapons/WeaponSettings';
 import { formatNumber, useTelemetry } from '../useTelemetry';
 import './TechnicalPanel.css';
+import type { RtsController } from '../../game/client/RtsController';
+import { isInstallation } from '../../game/entities/InstallationState';
+import type { ShaderSettings } from '../../game/rendering/ShaderSettings';
+import { ShaderControls } from './ShaderControls';
+import { cameraZoom } from '../../game/client/CameraController';
+import { cameraFrame } from '../../game/config/worldLayout';
 
 interface Props {
   runtime: GameRuntime;
+  controls: RtsController;
   config: GameConfig;
   debug: DebugOptions;
+  shaders: ShaderSettings;
+  onShaders: (settings: ShaderSettings) => void;
   paused: boolean;
   onSetting: (setting: NumericSetting, value: number) => void;
   onDamagePopupCurve: (curve: DamagePopupVelocityCurve) => void;
@@ -56,7 +65,6 @@ function CollapsibleSettingsGroup({
   return (
     <details
       className={className ? `settings-group ${className}` : 'settings-group'}
-      open
       aria-label={ariaLabel}
     >
       <summary>
@@ -312,7 +320,6 @@ const groups: { section: EditableSection; title: string; number: string }[] = [
   { section: 'damagePopup', title: 'Таблички урона', number: 'FX' },
   { section: 'simulation', title: 'Симуляция', number: '01' },
   { section: 'physics', title: 'Физика мира', number: '02' },
-  { section: 'movement', title: 'Движение', number: 'MOVE' },
 ];
 const debugLabels: { key: keyof DebugOptions; label: string }[] = [
   { key: 'trajectory', label: 'Прогноз траектории' },
@@ -323,15 +330,17 @@ const debugLabels: { key: keyof DebugOptions; label: string }[] = [
   { key: 'penetration', label: 'Путь пробития' },
   { key: 'surfaceNormals', label: 'Нормали поверхности' },
   { key: 'entityHitboxes', label: 'Хитбоксы юнитов' },
-  { key: 'movementTarget', label: 'Цель движения' },
   { key: 'explosionRadius', label: 'Радиусы последнего взрыва' },
   { key: 'explosionOcclusion', label: 'Укрытия от взрыва' },
 ];
 
 export function TechnicalPanel({
   runtime,
+  controls,
   config,
   debug,
+  shaders,
+  onShaders,
   paused,
   onSetting,
   onDamagePopupCurve,
@@ -344,9 +353,12 @@ export function TechnicalPanel({
   onReset,
   onResetSettings,
 }: Props) {
-  const data = useTelemetry(runtime);
+  const data = useTelemetry(runtime, controls);
+  const zoom = useSyncExternalStore(controls.camera.subscribe, controls.camera.getZoom);
   const [inspectedUnitId, setInspectedUnitId] = useState(2);
   const inspectedUnit = data.units.find((unit) => unit.id === inspectedUnitId);
+  const inspectedInstallation =
+    inspectedUnit && isInstallation(inspectedUnit) ? inspectedUnit : null;
   return (
     <aside className="technical-panel" aria-labelledby="settings-title">
       <div className="panel-heading">
@@ -359,6 +371,47 @@ export function TechnicalPanel({
         </span>
       </div>
       <div className="panel-settings">
+        <CollapsibleSettingsGroup title="Камера" meta={`${zoom.toFixed(2)}×`} ariaLabel="Камера">
+          <div className="numeric-control has-slider">
+            <div className="numeric-row">
+              <label htmlFor="camera-zoom">Масштаб</label>
+              <output htmlFor="camera-zoom">{zoom.toFixed(2)}×</output>
+            </div>
+            <input
+              id="camera-zoom"
+              className="value-slider"
+              type="range"
+              min={cameraZoom.min}
+              max={cameraZoom.max}
+              step={cameraZoom.step}
+              value={zoom}
+              onChange={(event) => controls.camera.setZoom(event.currentTarget.valueAsNumber)}
+              aria-valuetext={`${zoom.toFixed(2)}×`}
+            />
+          </div>
+          <p className="settings-note">
+            Обзор: {(cameraFrame.widthMeters / zoom).toFixed(1)} ×{' '}
+            {(cameraFrame.heightMeters / zoom).toFixed(1)} м. Одинаковый при любом разрешении
+            экрана.
+          </p>
+          <p className="settings-note">
+            Стрелки — перемещение. Зажмите среднюю кнопку мыши или Alt + ЛКМ, чтобы двигать карту.
+            Колесо — зум к указателю.
+          </p>
+          <button
+            className="camera-reset"
+            onClick={() => controls.camera.setZoom(cameraZoom.default)}
+          >
+            Вернуть масштаб 1×
+          </button>
+        </CollapsibleSettingsGroup>
+        <CollapsibleSettingsGroup
+          title="Шейдеры и эффекты"
+          meta="12 FX"
+          ariaLabel="Шейдеры и эффекты"
+        >
+          <ShaderControls settings={shaders} onChange={onShaders} />
+        </CollapsibleSettingsGroup>
         <CollapsibleSettingsGroup title="Сущности" meta="ENTITIES" ariaLabel="Сущности">
           <select
             id="unit-inspector"
@@ -368,7 +421,8 @@ export function TechnicalPanel({
           >
             {data.units.map((unit) => (
               <option key={unit.id} value={unit.id}>
-                Unit #{unit.id} · {unit.id === 1 ? 'Орудие' : 'Цель'}
+                Installation #{unit.id} ·{' '}
+                {unit.ownerPlayerId === controls.playerId ? 'Своя' : 'Противник'}
               </option>
             ))}
           </select>
@@ -402,8 +456,8 @@ export function TechnicalPanel({
             </div>
           </dl>
           <h3>
-            <span>Движение юнита</span>
-            <span>MOVEMENT</span>
+            <span>Установка</span>
+            <span>STATIONARY</span>
           </h3>
           <dl className="inspector-values">
             <div>
@@ -414,33 +468,39 @@ export function TechnicalPanel({
               </dd>
             </div>
             <div>
-              <dt>Цель X</dt>
-              <dd>{formatNumber(inspectedUnit?.movement?.targetX ?? null, 2)} m</dd>
+              <dt>Владелец</dt>
+              <dd>Player {inspectedUnit?.ownerPlayerId ?? '—'}</dd>
             </div>
             <div>
-              <dt>Скорость</dt>
-              <dd>{formatNumber(inspectedUnit?.movement?.speedMetersPerSecond ?? null, 1)} m/s</dd>
+              <dt>Тип</dt>
+              <dd>
+                {inspectedInstallation
+                  ? weaponDefinitions[inspectedInstallation.installationType].name
+                  : '—'}
+              </dd>
             </div>
             <div>
               <dt>На земле</dt>
-              <dd>{inspectedUnit?.movement?.grounded ? 'Да' : 'Нет'}</dd>
+              <dd>{inspectedInstallation?.grounding.grounded ? 'Да' : 'Нет'}</dd>
             </div>
             <div>
-              <dt>Склон</dt>
-              <dd>{formatNumber(inspectedUnit?.movement?.slopeAngleDeg ?? null, 1)}°</dd>
-            </div>
-            <div>
-              <dt>Остановка</dt>
+              <dt>Приказы</dt>
               <dd>
-                {inspectedUnit?.movement?.blockedReason === 'slope'
-                  ? 'Крутой склон'
-                  : inspectedUnit?.movement?.blockedReason === 'noGround'
-                    ? 'Нет опоры'
-                    : '—'}
+                {inspectedInstallation?.orders.length ?? 0} / {config.rts.maxOrders}
+              </dd>
+            </div>
+            <div>
+              <dt>Огонь</dt>
+              <dd>
+                {inspectedInstallation?.fireControl.lastFailure === 'noBallisticSolution'
+                  ? 'NO BALLISTIC SOLUTION'
+                  : (inspectedInstallation?.fireControl.status ?? '—')}
               </dd>
             </div>
           </dl>
-          <p className="settings-note">ПКМ на полигоне — переместить орудие. Цель неподвижна.</p>
+          <p className="settings-note">
+            Установки неподвижны. ПКМ по противнику — атака; A + ЛКМ — огонь по точке.
+          </p>
         </CollapsibleSettingsGroup>
         <CollapsibleSettingsGroup
           title="Попадание в юнит"
@@ -516,21 +576,20 @@ export function TechnicalPanel({
             )}
           </CollapsibleSettingsGroup>
         ))}
-        <CollapsibleSettingsGroup title="Оружие" meta="1 / 2 / 3">
+        <CollapsibleSettingsGroup title="Оружие" meta="Q / W / E">
           <select
             id="weapon-selector"
             aria-label="Выбор оружия"
-            value={data.weaponId}
+            value={data.selectionWeaponId ?? ''}
+            disabled={!data.selectedInstallations.length}
             onChange={(event) => {
               const weaponId = event.target.value;
-              if (isWeaponId(weaponId))
-                runtime.enqueueCommand({
-                  type: 'setWeapon',
-                  cannonId: runtime.getState().cannon.id,
-                  weaponId,
-                });
+              if (isWeaponId(weaponId)) controls.setWeapon(weaponId);
             }}
           >
+            <option value="" disabled>
+              {data.mixedWeapons ? 'Mixed' : 'Нет выделения'}
+            </option>
             {Object.values(weaponDefinitions).map((weapon) => (
               <option key={weapon.id} value={weapon.id}>
                 {weapon.name}
@@ -542,7 +601,10 @@ export function TechnicalPanel({
               Смена оружия ожидает следующего тика.
             </p>
           )}
-          <p className="settings-note">{data.projectileName} · параметры следующего выстрела</p>
+          <p className="settings-note">
+            Настройки профиля {data.weaponName} / {data.projectileName}. Применяются ко всем
+            установкам с этим оружием.
+          </p>
           {weaponNumericSettings
             .filter((setting) => setting.section === 'weapon' || setting.section === 'projectile')
             .map((setting) => (

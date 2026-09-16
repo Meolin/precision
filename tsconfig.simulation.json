@@ -6,6 +6,7 @@
     "src/game/core",
     "src/game/math",
     "src/game/commands",
+    "src/game/orders",
     "src/game/entities",
     "src/game/terrain",
     "src/game/ballistics",

@@ -11,14 +11,17 @@ import { applyEntityDamage } from './applyEntityDamage';
 import { createEntityImpactEvent } from './EntityImpactEvent';
 import { resolveEntityDamage } from './resolveEntityDamage';
 import { simulateTrajectoryPreview } from '../ballistics/trajectoryPreview';
-import { cloneUnit } from '../entities/UnitState';
+import { cloneUnit, spawnTarget } from '../entities/UnitState';
 
 function scene() {
   const config = cloneConfig();
   config.physics.gravity = 0;
   const state = createGameState(config, 12345);
+  const target = spawnTarget(state.terrain, 2);
+  delete target.movement;
+  state.units = [state.cannon, target];
   state.terrain = new TerrainGrid(120, 64, 1);
-  const target = state.units[1]!;
+  state.cannon.grounding.terrainVersion = state.terrain.version;
   target.position = { x: 10, y: 10 };
   target.hitbox.radiusMeters = 1;
   const shell = createProjectile(state.cannon, config, state.nextEntityId++, 0);
@@ -163,10 +166,10 @@ describe('entity combat integration', () => {
     expect(state.lastEntityImpact?.targetEntityId).toBe(target.id);
     expect(preview.impact).toEqual(state.lastEntityImpact?.position);
   });
-  it('initial scene has two distinct units and preview cache observes position and death', () => {
+  it('initial scene has eight distinct installations and preview cache observes position and death', () => {
     const runtime = new GameRuntime();
     const state = runtime.getState();
-    expect(state.units.map((unit) => unit.id)).toEqual([1, 2]);
+    expect(state.units.map((unit) => unit.id)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
     const initial = runtime.getTrajectoryPreview();
     state.units[1]!.position.x -= 1;
     expect(runtime.getTrajectoryPreview()).not.toBe(initial);

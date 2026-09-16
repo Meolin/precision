@@ -1,9 +1,10 @@
 import type { GameRuntime } from '../../game/core/GameRuntime';
 import { formatNumber, useTelemetry } from '../useTelemetry';
+import type { RtsController } from '../../game/client/RtsController';
 
-export function HUD({ runtime }: { runtime: GameRuntime }) {
-  const data = useTelemetry(runtime);
-  const shooter = data.units.find((unit) => unit.id === 1);
+export function HUD({ runtime, controls }: { runtime: GameRuntime; controls: RtsController }) {
+  const data = useTelemetry(runtime, controls);
+  const shooter = data.selectedInstallations.find((unit) => unit.id === data.singleSelectionId);
   const values = [
     { label: 'Угол ствола', value: formatNumber(data.angle, 1), unit: '°' },
     { label: 'Начальная скорость', value: formatNumber(data.velocity, 1), unit: 'm/s' },
@@ -14,38 +15,21 @@ export function HUD({ runtime }: { runtime: GameRuntime }) {
     <>
       <div className="weapon-status" aria-label="Выбранное оружие">
         <span>
-          <b>{data.weaponName}</b> / {data.projectileName}
-          {data.weaponPending ? ' · в очереди' : ''}
+          <b>{shooter ? data.weaponName : data.mixedWeapons ? 'Оружие: Mixed' : 'Управление батареей'}</b>
+          {shooter ? ` / ${data.projectileName}` : ` · выбрано ${data.selectedIds.length}`}
+          {shooter && data.weaponPending ? ' · в очереди' : ''}
         </span>
         <span>
-          {!data.shooterAlive
+          {!shooter
+            ? 'Ручная стрельба: выберите одну установку'
+            : !data.shooterAlive
             ? 'Орудие уничтожено'
             : data.cooldownRemaining > 0
               ? `До выстрела ${formatNumber(data.cooldownRemaining, 1)} s`
               : 'Готово к выстрелу'}
         </span>
       </div>
-      <div className="combat-status" aria-label="Здоровье юнитов">
-        {data.units.map((unit) => (
-          <div key={unit.id}>
-            <span>
-              {unit.id === 1 ? 'Орудие' : 'Цель'} #{unit.id}
-            </span>
-            <strong>
-              {unit.alive
-                ? `${formatNumber(unit.health.current, 1)} / ${unit.health.max} HP`
-                : 'DESTROYED'}
-            </strong>
-            <meter
-              min={0}
-              max={unit.health.max}
-              value={unit.health.current}
-              aria-label={`Здоровье юнита ${unit.id}`}
-            />
-          </div>
-        ))}
-      </div>
-      <div className="hud" aria-label="Параметры выстрела">
+      {shooter && <div className="hud" aria-label="Параметры выстрела">
         {values.map((item, index) => (
           <div className={`hud-item ${index === 3 ? 'accent-value' : ''}`} key={item.label}>
             <span className="eyebrow">{item.label}</span>
@@ -55,21 +39,13 @@ export function HUD({ runtime }: { runtime: GameRuntime }) {
             </div>
           </div>
         ))}
-      </div>
-      <p className="movement-status" aria-label="Движение орудия">
+      </div>}
+      {shooter && <p className="movement-status" aria-label="Позиция установки">
+        Установка #{shooter.id} · Стационарная ·{' '}
         Позиция {formatNumber(shooter?.position.x ?? null, 1)} /{' '}
-        {formatNumber(shooter?.position.y ?? null, 1)} m{' · '}Цель X{' '}
-        {formatNumber(shooter?.movement?.targetX ?? null, 1)} m{' · '}
-        {formatNumber(shooter?.movement?.speedMetersPerSecond ?? null, 1)} m/s
-        {' · '}Склон {formatNumber(shooter?.movement?.slopeAngleDeg ?? null, 1)}°{' · '}
-        {!shooter?.alive
-          ? 'Уничтожено'
-          : shooter.movement?.blockedReason === 'slope'
-            ? 'Крутой склон'
-            : shooter.movement?.grounded
-              ? 'На земле'
-              : 'Нет опоры'}
-      </p>
+        {formatNumber(shooter?.position.y ?? null, 1)} m{' · '}
+        {shooter.grounding.grounded ? 'Есть опора' : 'Нет опоры'}
+      </p>}
     </>
   );
 }

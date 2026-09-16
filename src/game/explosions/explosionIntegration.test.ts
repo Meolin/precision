@@ -6,7 +6,7 @@ import { GameRuntime } from '../core/GameRuntime';
 import { createGameState } from '../core/GameState';
 import { createGameSnapshot } from '../core/GameSnapshot';
 import { stepSimulation } from '../core/stepSimulation';
-import { cloneUnit } from '../entities/UnitState';
+import { cloneUnit, spawnTarget } from '../entities/UnitState';
 import { TerrainGrid } from '../terrain/TerrainGrid';
 import { applyTerrainDamage } from '../terrain/damageTerrain';
 import type { WeaponId } from '../weapons/WeaponDefinition';
@@ -16,11 +16,13 @@ function scene(weaponId: WeaponId = 'mortar') {
   const config = cloneConfig();
   config.physics = { gravity: 0, windAcceleration: 0, airDrag: 0 };
   const state = createGameState(config, 12345);
+  const target = spawnTarget(state.terrain, 2);
+  delete target.movement;
+  state.units = [state.cannon, target];
   state.terrain = new TerrainGrid(160, 120, 0.25);
-  for (const unit of state.units) delete unit.movement;
+  state.cannon.grounding.terrainVersion = state.terrain.version;
   state.cannon.position = { x: 30, y: 10 };
   state.cannon.weaponId = weaponId;
-  const target = state.units[1]!;
   target.position = { x: 10, y: 10 };
   target.hitbox.radiusMeters = 1;
   const neighbor = { ...cloneUnit(target), id: 4, position: { x: 12, y: 11 } };
@@ -159,6 +161,44 @@ describe('explosion impact pipeline', () => {
     expect(explosions.map((event) => event.sourceProjectileId)).toEqual([10, 11]);
     expect(createGameSnapshot(run())).toEqual(createGameSnapshot(first));
     expect(run().events).toEqual(first.events);
+  });
+  it('retains all explosion visuals across catch-up ticks, freezes on pause and clears on reset', () => {
+    const { state, config, shell } = scene();
+    state.projectiles.push({
+      ...shell,
+      id: state.nextEntityId++,
+      position: { ...shell.position },
+      previousPosition: { ...shell.previousPosition },
+      velocity: { ...shell.velocity },
+    });
+    const runtime = new GameRuntime(config);
+    Object.assign(runtime.getState(), state);
+    runtime.advance(100);
+    expect(runtime.getState().events).toEqual([]);
+    expect(
+      runtime
+        .getRecentExplosions()
+        .map((item) => item.event.resolution.explosion.sourceProjectileId),
+    ).toEqual([10, 11]);
+    expect(createGameSnapshot(runtime.getState())).not.toHaveProperty('recentExplosions');
+    const captured = runtime.getRecentExplosions();
+    const time = runtime.presentationTimeSeconds;
+    runtime.setPaused(true);
+    runtime.advance(2000);
+    expect(runtime.presentationTimeSeconds).toBe(time);
+    expect(runtime.getRecentExplosions()).toBe(captured);
+    runtime.step();
+    expect(runtime.presentationTimeSeconds).toBeGreaterThan(time);
+    runtime.setPaused(false);
+    for (let frame = 0; frame < 70; frame++) runtime.advance(100);
+    expect(runtime.getRecentExplosions()).toEqual([]);
+    runtime.reset();
+    const next = scene();
+    Object.assign(runtime.getState(), next.state);
+    runtime.advance(100);
+    expect(runtime.getRecentExplosions()).toHaveLength(1);
+    runtime.reset();
+    expect(runtime.getRecentExplosions()).toEqual([]);
   });
   it('preview stops at the explosive contact without resolving damage or mutating the world', () => {
     const { state, config } = scene();

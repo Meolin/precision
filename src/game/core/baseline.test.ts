@@ -14,6 +14,9 @@ describe('ballistic MVP baseline', () => {
     { name: 'high angle', angle: 80, wind: 0, drag: 0.15 },
   ])('$name', ({ angle, wind, drag }) => {
     const config = cloneConfig();
+    // Preserve the original map geometry now that new scenes span three camera widths.
+    config.world.widthMeters = 120;
+    config.world.heightMeters = 64;
     // The unchanged Step 1/2 snapshots describe the all-Soil fixture.
     config.terrain.rockDepthMeters = null;
     config.physics.windAcceleration = wind;
@@ -23,6 +26,9 @@ describe('ballistic MVP baseline', () => {
     // Step 5 grounding deliberately raises a full circle clear of adjacent cells.
     Object.assign(runtime.getState().cannon, spawnCannon(runtime.getState().terrain, config));
     delete runtime.getState().cannon.movement;
+    runtime.getState().cannon.grounding.terrainVersion = runtime.getState().terrain.version;
+    // Isolate the original one-gun physics fixture from the new battery scene.
+    runtime.getState().units.splice(1);
     runtime.enqueueCommand({ type: 'setAim', cannonId: 1, angleRad: toRadians(angle) });
     runtime.advance(1000 / 60);
     const preview = runtime.getTrajectoryPreview();
