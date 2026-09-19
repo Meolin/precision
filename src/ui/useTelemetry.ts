@@ -29,11 +29,14 @@ function readTelemetry(runtime: GameRuntime, controls?: RtsController) {
     selectedInstallations,
     selectedIds: [...(controls?.selection.selectedEntityIds ?? [])],
     singleSelectionId: single?.id ?? null,
-    selectionWeaponId: selectedWeaponIds.size === 1 ? selectedInstallations[0]?.weaponId ?? null : null,
+    selectionWeaponId:
+      selectedWeaponIds.size === 1 ? (selectedInstallations[0]?.weaponId ?? null) : null,
     mixedWeapons: selectedWeaponIds.size > 1,
     inputMode: controls?.inputMode ?? 'default',
     queueTargeting: controls?.queueTargeting ?? false,
-    controlGroups: Object.fromEntries(Object.entries(controls?.controlGroups ?? {}).map(([key, ids]) => [key, [...(ids ?? [])]])),
+    controlGroups: Object.fromEntries(
+      Object.entries(controls?.controlGroups ?? {}).map(([key, ids]) => [key, [...(ids ?? [])]]),
+    ),
     hoveredUnit: state.units.find((unit) => unit.id === controls?.selection.hoveredEntityId),
     inspectedEntityId: controls?.inspectedEntityId ?? null,
     explosionEnabled: Boolean(impact.explosion),
@@ -105,7 +108,9 @@ function readTelemetry(runtime: GameRuntime, controls?: RtsController) {
     weaponId: weapon.id,
     weaponName: weapon.name,
     projectileName: definition.name,
-    weaponPending: weapon.id !== state.units.filter(isInstallation).find((unit) => unit.id === cannon.id)?.weaponId,
+    weaponPending:
+      weapon.id !==
+      state.units.filter(isInstallation).find((unit) => unit.id === cannon.id)?.weaponId,
     cooldownRemaining: Math.max(0, cannon.nextFireTimeSeconds - state.elapsedSeconds),
     velocity: weapon.muzzleVelocity,
     mass: definition.massKg,

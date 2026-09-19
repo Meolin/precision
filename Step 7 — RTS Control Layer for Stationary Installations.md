@@ -161,7 +161,7 @@ npm run build
 Начать вводить понятие:
 
 ```ts
-Installation
+Installation;
 ```
 
 как основную стационарную игровую сущность.
@@ -169,7 +169,7 @@ Installation
 Не обязательно сразу удалять существующий:
 
 ```ts
-UnitState
+UnitState;
 ```
 
 Если текущая архитектура построена вокруг UnitState, безопаснее расширить её.
@@ -177,9 +177,7 @@ UnitState
 Например:
 
 ```ts
-type EntityKind =
-  | 'installation'
-  | 'drone';
+type EntityKind = 'installation' | 'drone';
 ```
 
 или:
@@ -481,7 +479,7 @@ Multiple selection должна быть легко читаемой.
 Не хранить:
 
 ```ts
-selected: true
+selected: true;
 ```
 
 в simulation entity.
@@ -551,10 +549,7 @@ Ctrl + 9
 Client-side:
 
 ```ts
-type ControlGroups = Record<
-  number,
-  EntityId[]
->;
+type ControlGroups = Record<number, EntityId[]>;
 ```
 
 Не хранить в simulation.
@@ -760,15 +755,13 @@ AttackTargetOrder
 Добавить минимальный:
 
 ```ts
-type InstallationOrder =
-  | AttackGroundOrder
-  | AttackTargetOrder;
+type InstallationOrder = AttackGroundOrder | AttackTargetOrder;
 ```
 
 Можно добавить:
 
 ```ts
-StopOrder
+StopOrder;
 ```
 
 если архитектурно удобно.
@@ -1423,9 +1416,7 @@ Space
 Добавить понятие client input mode:
 
 ```ts
-type InputMode =
-  | 'default'
-  | 'attackGround';
+type InputMode = 'default' | 'attackGround';
 ```
 
 Не помещать InputMode в simulation.

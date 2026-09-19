@@ -16,7 +16,10 @@ function segmentDistance(point: Vec2, start: Vec2, end: Vec2): number {
   const dx = end.x - start.x;
   const dy = end.y - start.y;
   const denominator = dx * dx + dy * dy;
-  const t = denominator > 0 ? clamp(((point.x - start.x) * dx + (point.y - start.y) * dy) / denominator, 0, 1) : 0;
+  const t =
+    denominator > 0
+      ? clamp(((point.x - start.x) * dx + (point.y - start.y) * dy) / denominator, 0, 1)
+      : 0;
   return Math.hypot(point.x - start.x - t * dx, point.y - start.y - t * dy);
 }
 
@@ -43,8 +46,10 @@ export function solveBallisticAim(
     sampled.add(elevation);
     const angleRad = left ? Math.PI - elevation : elevation;
     const projectile = createProjectile({ ...cannon, angleRad }, config, -1, 0);
-    const maxTicks = Math.min(config.rts.solverMaxTicksPerCandidate,
-      Math.ceil(Math.min(config.rts.solverMaxSeconds, projectile.maxLifetimeSeconds) / dt));
+    const maxTicks = Math.min(
+      config.rts.solverMaxTicksPerCandidate,
+      Math.ceil(Math.min(config.rts.solverMaxSeconds, projectile.maxLifetimeSeconds) / dt),
+    );
     let missDistanceMeters = Infinity;
     let valid = false;
     let flightSeconds = 0;
@@ -75,12 +80,26 @@ export function solveBallisticAim(
   spacing = (max - min) / steps;
   for (let index = 0; index <= steps; index++) evaluate(min + spacing * index);
   for (let round = 0; round < config.rts.solverRefinements; round++) {
-    const promising = [...candidates].sort((a, b) => a.missDistanceMeters - b.missDistanceMeters || a.elevation - b.elevation).slice(0, 4);
+    const promising = [...candidates]
+      .sort((a, b) => a.missDistanceMeters - b.missDistanceMeters || a.elevation - b.elevation)
+      .slice(0, 4);
     spacing /= 4;
     for (const candidate of promising)
       for (const offset of [-3, -2, -1, 1, 2, 3]) evaluate(candidate.elevation + spacing * offset);
   }
-  const solution = candidates.filter((candidate) => candidate.valid).sort((a, b) =>
-    a.missDistanceMeters - b.missDistanceMeters || a.flightSeconds - b.flightSeconds || a.elevation - b.elevation)[0];
-  return solution ? { angleRad: solution.angleRad, missDistanceMeters: solution.missDistanceMeters, flightSeconds: solution.flightSeconds } : null;
+  const solution = candidates
+    .filter((candidate) => candidate.valid)
+    .sort(
+      (a, b) =>
+        a.missDistanceMeters - b.missDistanceMeters ||
+        a.flightSeconds - b.flightSeconds ||
+        a.elevation - b.elevation,
+    )[0];
+  return solution
+    ? {
+        angleRad: solution.angleRad,
+        missDistanceMeters: solution.missDistanceMeters,
+        flightSeconds: solution.flightSeconds,
+      }
+    : null;
 }

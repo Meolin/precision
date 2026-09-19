@@ -52,5 +52,5 @@ export function generateTerrain(config: GameConfig, seed: number): TerrainGrid {
       cells[row * columns + column] =
         (row - firstRow) * cell >= rockDepth ? TerrainMaterialId.Rock : TerrainMaterialId.Soil;
   }
-  return new TerrainGrid(columns, rows, cell, cells);
+  return new TerrainGrid(columns, rows, cell, cells, config.terrain.chunkSizeCells);
 }

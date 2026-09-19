@@ -322,7 +322,7 @@ Material properties используются позднее ImpactResolver.
 Например:
 
 ```ts
-normal = normalize(-projectile.velocity)
+normal = normalize(-projectile.velocity);
 ```
 
 или другой безопасный вариант.
@@ -456,11 +456,7 @@ angle ≈ 90°
 ```ts
 const incoming = normalize(velocity);
 
-const cosine = clamp(
-  dot(scale(incoming, -1), surfaceNormal),
-  -1,
-  1
-);
+const cosine = clamp(dot(scale(incoming, -1), surfaceNormal), -1, 1);
 
 const impactAngleRad = Math.acos(cosine);
 ```
@@ -468,7 +464,7 @@ const impactAngleRad = Math.acos(cosine);
 При необходимости преобразовать:
 
 ```ts
-impactAngleDeg
+impactAngleDeg;
 ```
 
 Главное — один convention во всём проекте.
@@ -726,7 +722,7 @@ penetrate / stop
 Не писать одну функцию на 300 строк:
 
 ```ts
-resolveImpact()
+resolveImpact();
 ```
 
 с десятками nested `if`.
@@ -751,9 +747,7 @@ PenetrationResolver
 
 ```ts
 export type ImpactResolution =
-  | StopImpactResolution
-  | PenetrationImpactResolution
-  | RicochetImpactResolution;
+  StopImpactResolution | PenetrationImpactResolution | RicochetImpactResolution;
 ```
 
 ---
@@ -791,9 +785,7 @@ export interface RicochetImpactResolution {
 Для normalized normal:
 
 ```ts
-reflected =
-  velocity -
-  2 * dot(velocity, normal) * normal;
+reflected = velocity - 2 * dot(velocity, normal) * normal;
 ```
 
 Создать общий helper:
@@ -830,17 +822,13 @@ energyRetention = 0.6
 После вычисления remaining energy:
 
 ```ts
-speedAfter =
-  Math.sqrt(
-    2 * remainingEnergyJ / projectile.massKg
-  );
+speedAfter = Math.sqrt((2 * remainingEnergyJ) / projectile.massKg);
 ```
 
 Затем:
 
 ```ts
-outgoingVelocity =
-  normalize(reflectedDirection) * speedAfter;
+outgoingVelocity = normalize(reflectedDirection) * speedAfter;
 ```
 
 Таким образом энергия остаётся source of truth.
@@ -852,8 +840,8 @@ outgoingVelocity =
 Не делать одновременно:
 
 ```ts
-velocity *= 0.7
-energy *= 0.6
+velocity *= 0.7;
+energy *= 0.6;
 ```
 
 иначе физика станет противоречивой.
@@ -925,9 +913,7 @@ Mortar → 0
 Переместить его немного от surface:
 
 ```ts
-position =
-  impactPoint +
-  surfaceNormal * separationEpsilon;
+position = impactPoint + surfaceNormal * separationEpsilon;
 ```
 
 или вдоль outgoing direction, если это лучше подходит текущему collision.
@@ -948,11 +934,7 @@ projectile radius
 Например концептуально:
 
 ```ts
-epsilon =
-  Math.max(
-    terrain.cellSize * 0.1,
-    projectile.radius * 0.1
-  );
+epsilon = Math.max(terrain.cellSize * 0.1, projectile.radius * 0.1);
 ```
 
 ---
@@ -1162,9 +1144,7 @@ small impact chip
 Пример:
 
 ```ts
-radius =
-  baseImpactMarkRadius *
-  someEnergyFactor;
+radius = baseImpactMarkRadius * someEnergyFactor;
 ```
 
 Не создавать большую воронку при скользящем ricochet.
@@ -1257,7 +1237,7 @@ Rock > Soil
 Не использовать:
 
 ```ts
-Math.random()
+Math.random();
 ```
 
 для ricochet.
@@ -1765,7 +1745,7 @@ acos outside [-1, 1]
 Перед `Math.acos` обязательно:
 
 ```ts
-clamp(value, -1, 1)
+clamp(value, -1, 1);
 ```
 
 ---

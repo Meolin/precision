@@ -79,3 +79,13 @@ export function sweepTerrain(
   }
   return null;
 }
+
+/** Point raycast convenience for placement, line-of-fire and occlusion consumers. */
+export function raycastTerrain(
+  terrain: TerrainGrid,
+  from: Vec2,
+  to: Vec2,
+  debugSamples?: Vec2[],
+): TerrainHit | null {
+  return sweepTerrain(terrain, from, to, 0, debugSamples);
+}

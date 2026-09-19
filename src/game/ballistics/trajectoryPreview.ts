@@ -67,6 +67,7 @@ export function simulateTrajectoryPreview(
             terrain.rows,
             terrain.cellSizeMeters,
             terrain.cells,
+            terrain.chunkSizeCells,
           );
         for (const damage of resolution.terrainDamageEvents)
           applyTerrainDamage(previewTerrain, damage);

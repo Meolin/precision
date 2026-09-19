@@ -37,6 +37,7 @@ export function useGameInput(
   controls: RtsController,
   onPause: () => void,
   onReset: () => void,
+  onToggleTerrainDebug: (key: 'collisionMask' | 'terrainChunks' | 'terrainDirtyRects') => void,
 ): void {
   useEffect(() => {
     const element = surface.current;
@@ -346,6 +347,19 @@ export function useGameInput(
         return;
       }
       switch (event.code) {
+        case 'F3':
+        case 'F4':
+        case 'F5':
+          event.preventDefault();
+          if (!event.repeat)
+            onToggleTerrainDebug(
+              event.code === 'F3'
+                ? 'collisionMask'
+                : event.code === 'F4'
+                  ? 'terrainChunks'
+                  : 'terrainDirtyRects',
+            );
+          break;
         case 'KeyA':
           event.preventDefault();
           if (!event.repeat) {
@@ -463,5 +477,5 @@ export function useGameInput(
       window.removeEventListener('keydown', keydown);
       window.removeEventListener('keyup', keyup);
     };
-  }, [surface, runtime, controls, onPause, onReset]);
+  }, [surface, runtime, controls, onPause, onReset, onToggleTerrainDebug]);
 }

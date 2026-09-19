@@ -3,4 +3,5 @@ dist/
 coverage/
 *.local
 *.log
+.superdesign/tmp/
 .DS_Store

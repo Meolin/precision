@@ -239,6 +239,7 @@ export class GameRuntime {
       validated.world.widthMeters !== this.config.world.widthMeters ||
       validated.world.heightMeters !== this.config.world.heightMeters ||
       validated.terrain.cellSizeMeters !== this.config.terrain.cellSizeMeters ||
+      validated.terrain.chunkSizeCells !== this.config.terrain.chunkSizeCells ||
       validated.terrain.rockDepthMeters !== this.config.terrain.rockDepthMeters ||
       validated.terrain.rockVariationMeters !== this.config.terrain.rockVariationMeters ||
       validated.rts.installationsPerPlayer !== this.config.rts.installationsPerPlayer;

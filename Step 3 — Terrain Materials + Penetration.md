@@ -202,7 +202,7 @@ TerrainGrid всё ещё должен использовать компактн
 Предпочтительно:
 
 ```ts
-Uint8Array
+Uint8Array;
 ```
 
 Не создавать object для каждой terrain cell.
@@ -245,7 +245,7 @@ terrain.applyDamageOperation(...)
 `isSolid()` можно сохранить как compatibility helper:
 
 ```ts
-material !== TerrainMaterialId.Air
+material !== TerrainMaterialId.Air;
 ```
 
 ---
@@ -291,10 +291,7 @@ penetrationResistance
 Например:
 
 ```ts
-export const terrainMaterialDefinitions: Record<
-  TerrainMaterialId,
-  TerrainMaterialDefinition
->
+export const terrainMaterialDefinitions: Record<TerrainMaterialId, TerrainMaterialDefinition>;
 ```
 
 или аналогичную strongly typed структуру.
@@ -405,7 +402,7 @@ Rock generation должна быть deterministic для одного seed.
 Нельзя использовать:
 
 ```ts
-Math.random()
+Math.random();
 ```
 
 Использовать существующий seeded random.
@@ -609,18 +606,13 @@ interface ProjectileDefinition {
 Базовая модель сопротивления может выглядеть:
 
 ```ts
-effectiveResistance =
-  material.penetrationResistance /
-  projectile.penetrationPower;
+effectiveResistance = material.penetrationResistance / projectile.penetrationPower;
 ```
 
 или:
 
 ```ts
-energyCost =
-  material.penetrationResistance
-  * distance
-  / penetrationPower;
+energyCost = (material.penetrationResistance * distance) / penetrationPower;
 ```
 
 Выбрать одну простую модель.
@@ -706,7 +698,7 @@ material definitions
 Использовать:
 
 ```ts
-direction = normalize(impactVelocity)
+direction = normalize(impactVelocity);
 ```
 
 Не реализовывать deviation.
@@ -728,7 +720,7 @@ Energy никогда не должна стать отрицательной.
 Использовать:
 
 ```ts
-Math.max(0, remainingEnergyJ)
+Math.max(0, remainingEnergyJ);
 ```
 
 ---
@@ -790,9 +782,7 @@ E = 0.5 * m * v²
 следовательно:
 
 ```ts
-newSpeed = Math.sqrt(
-  (2 * remainingEnergyJ) / projectile.massKg
-);
+newSpeed = Math.sqrt((2 * remainingEnergyJ) / projectile.massKg);
 ```
 
 Направление сохранить:
@@ -818,9 +808,7 @@ exit position всё ещё считается solid
 Допустимо использовать небольшой epsilon:
 
 ```ts
-exitPosition =
-  detectedExitPosition +
-  direction * epsilon;
+exitPosition = detectedExitPosition + direction * epsilon;
 ```
 
 Epsilon должен быть связан с terrain cell size, а не быть случайным magic number.
@@ -864,15 +852,13 @@ interface CircleTerrainDamage {
 Объединить:
 
 ```ts
-type TerrainDamageOperation =
-  | CircleTerrainDamage
-  | CapsuleTerrainDamage;
+type TerrainDamageOperation = CircleTerrainDamage | CapsuleTerrainDamage;
 ```
 
 Если текущая архитектура использует Event:
 
 ```ts
-TerrainDamageEvent
+TerrainDamageEvent;
 ```
 
 он должен содержать operation.
@@ -972,9 +958,7 @@ interface ImpactDefinition {
 Например:
 
 ```ts
-effectiveCraterRadius =
-  baseCraterRadius /
-  material.blastResistance;
+effectiveCraterRadius = baseCraterRadius / material.blastResistance;
 ```
 
 или более мягкой формулой.

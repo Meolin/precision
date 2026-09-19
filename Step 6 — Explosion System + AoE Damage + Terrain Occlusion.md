@@ -403,11 +403,7 @@ distance(center, unit.position)
 Для CircleHitbox:
 
 ```ts id="r21f96"
-effectiveDistance =
-  max(
-    0,
-    centerDistance - hitbox.radiusMeters
-  );
+effectiveDistance = max(0, centerDistance - hitbox.radiusMeters);
 ```
 
 Использовать это значение для AoE falloff.
@@ -459,15 +455,9 @@ if (distance >= radius) {
   return 0;
 }
 
-const t =
-  (distance - innerRadius) /
-  (radius - innerRadius);
+const t = (distance - innerRadius) / (radius - innerRadius);
 
-return lerp(
-  maxDamage,
-  minDamage,
-  t
-);
+return lerp(maxDamage, minDamage, t);
 ```
 
 ---
@@ -633,8 +623,7 @@ Explosion полностью определяет crater.
 
 ### вариант B
 
-direct impact crater
-+
+direct impact crater +
 explosion terrain damage
 
 Не допускать случайного двойного огромного crater.
@@ -654,11 +643,7 @@ Explosion damage не должен беспрепятственно проход
 Добавить:
 
 ```ts id="yl8p2s"
-isBlastPathOccluded(
-  explosionPosition,
-  targetPosition,
-  terrain
-)
+isBlastPathOccluded(explosionPosition, targetPosition, terrain);
 ```
 
 ---
@@ -733,9 +718,7 @@ explosion's own impact cell
 Для первой версии:
 
 ```ts id="g7vhgs"
-finalDamage =
-  rawDamage *
-  occludedDamageMultiplier;
+finalDamage = rawDamage * occludedDamageMultiplier;
 ```
 
 Например:

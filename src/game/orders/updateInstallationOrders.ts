@@ -14,10 +14,17 @@ export function updateInstallationOrders(state: GameState, config: GameConfig): 
     }
     const order = installation.orders[0];
     if (!order) continue;
-    const target = order.type === 'attackTarget'
-      ? state.units.find((unit) => unit.id === order.targetEntityId) : undefined;
-    if (order.type === 'attackTarget' && (!target?.alive || target.health.current <= 0 ||
-        target.teamId === installation.teamId || target.ownerPlayerId === installation.ownerPlayerId)) {
+    const target =
+      order.type === 'attackTarget'
+        ? state.units.find((unit) => unit.id === order.targetEntityId)
+        : undefined;
+    if (
+      order.type === 'attackTarget' &&
+      (!target?.alive ||
+        target.health.current <= 0 ||
+        target.teamId === installation.teamId ||
+        target.ownerPlayerId === installation.ownerPlayerId)
+    ) {
       installation.orders.shift();
       installation.fireControl.status = 'failed';
       installation.fireControl.lastFailure = 'targetLost';
@@ -33,8 +40,18 @@ export function updateInstallationOrders(state: GameState, config: GameConfig): 
       installation.fireControl.lastFailure = 'unsupported';
       continue;
     }
-    const position = order.type === 'attackGround' ? order.targetPosition : hitboxCenter(target!.position, target!.hitbox);
-    const solution = solveBallisticAim(installation, position, state.terrain, config, state.units, target?.id);
+    const position =
+      order.type === 'attackGround'
+        ? order.targetPosition
+        : hitboxCenter(target!.position, target!.hitbox);
+    const solution = solveBallisticAim(
+      installation,
+      position,
+      state.terrain,
+      config,
+      state.units,
+      target?.id,
+    );
     installation.fireControl.lastSolution = solution;
     if (!solution) {
       installation.orders.shift();

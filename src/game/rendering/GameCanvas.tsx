@@ -7,17 +7,32 @@ import type { DebugOptions } from './DebugOptions';
 import { GameScene } from './GameScene';
 import type { RtsController } from '../client/RtsController';
 import type { ShaderSettings } from './ShaderSettings';
+import type { TerrainSmoothingSettings } from './TerrainSmoothingSettings';
+import type { BuildingAnimationPreview } from '../buildings/BuildingAnimationPreview';
 
 interface Props {
   runtime: GameRuntime;
   controls: RtsController;
   debug: DebugOptions;
   shaders: ShaderSettings;
+  terrainSmoothing: TerrainSmoothingSettings;
+  onToggleTerrainDebug: (key: 'collisionMask' | 'terrainChunks' | 'terrainDirtyRects') => void;
   onPause: () => void;
   onReset: () => void;
+  buildingPreview?: BuildingAnimationPreview;
 }
 
-export function GameCanvas({ runtime, controls, debug, shaders, onPause, onReset }: Props) {
+export function GameCanvas({
+  runtime,
+  controls,
+  debug,
+  shaders,
+  terrainSmoothing,
+  onToggleTerrainDebug,
+  onPause,
+  onReset,
+  buildingPreview,
+}: Props) {
   const surface = useRef<HTMLDivElement>(null);
   const application = useRef<ApplicationRef>(null);
   const [fps, setFps] = useState(0);
@@ -26,7 +41,7 @@ export function GameCanvas({ runtime, controls, debug, shaders, onPause, onReset
     if (element)
       app.renderer.resize(Math.max(1, element.clientWidth), Math.max(1, element.clientHeight));
   }, []);
-  useGameInput(surface, runtime, controls, onPause, onReset);
+  useGameInput(surface, runtime, controls, onPause, onReset, onToggleTerrainDebug);
   useEffect(() => {
     if (!surface.current) return;
     const observer = new ResizeObserver(() => {
@@ -76,7 +91,14 @@ export function GameCanvas({ runtime, controls, debug, shaders, onPause, onReset
         resolution={Math.min(window.devicePixelRatio || 1, 2)}
         preference="webgl"
       >
-        <GameScene runtime={runtime} controls={controls} debug={debug} shaders={shaders} />
+        <GameScene
+          runtime={runtime}
+          controls={controls}
+          debug={debug}
+          shaders={shaders}
+          terrainSmoothing={terrainSmoothing}
+          buildingPreview={buildingPreview}
+        />
       </Application>
     </div>
   );

@@ -1,16 +1,45 @@
 import { clamp, type Vec2 } from '../math/Vec2';
+import {
+  unionTerrainRect,
+  type TerrainChangeResult,
+  type TerrainChunk,
+  type TerrainChunkChange,
+  type TerrainChunkId,
+  type TerrainRect,
+} from './TerrainChunk';
 import { TerrainMaterialId } from './TerrainMaterialId';
 
-/** Material bytes in meters; +x right, +y down. No material physics lives here. */
+export const defaultTerrainChunkSizeCells = 256;
+const maxChangeHistory = 512;
+
+interface PendingChunkChange {
+  chunk: TerrainChunk;
+  dirtyRect: TerrainRect;
+}
+
+/**
+ * Authoritative terrain storage. Materials remain a compact byte map while all occupancy queries
+ * use independently updateable packed chunk masks. Coordinates are cells unless named otherwise.
+ */
 export class TerrainGrid {
   readonly cells: Uint8Array;
+  readonly chunks: readonly TerrainChunk[];
+  readonly chunkColumns: number;
+  readonly chunkRows: number;
   version = 0;
+  lastChange: TerrainChangeResult;
+  collisionQueryCount = 0;
+  totalModifiedPixels = 0;
+
+  private readonly mutableChunks: TerrainChunk[];
+  private readonly changeHistory: TerrainChangeResult[] = [];
 
   constructor(
     readonly columns: number,
     readonly rows: number,
     readonly cellSizeMeters: number,
     cells?: Uint8Array,
+    readonly chunkSizeCells = defaultTerrainChunkSizeCells,
   ) {
     if (
       !Number.isInteger(columns) ||
@@ -18,23 +47,43 @@ export class TerrainGrid {
       columns <= 0 ||
       rows <= 0 ||
       !Number.isFinite(cellSizeMeters) ||
-      cellSizeMeters <= 0
+      cellSizeMeters <= 0 ||
+      !Number.isInteger(chunkSizeCells) ||
+      chunkSizeCells <= 0
     )
       throw new Error('Invalid terrain dimensions.');
     if (cells && cells.length !== columns * rows) throw new Error('Terrain data size mismatch.');
     this.cells = cells ? cells.slice() : new Uint8Array(columns * rows);
+    this.chunkColumns = Math.ceil(columns / chunkSizeCells);
+    this.chunkRows = Math.ceil(rows / chunkSizeCells);
+    this.mutableChunks = [];
+    for (let chunkRow = 0; chunkRow < this.chunkRows; chunkRow++)
+      for (let chunkColumn = 0; chunkColumn < this.chunkColumns; chunkColumn++) {
+        const originX = chunkColumn * chunkSizeCells;
+        const originY = chunkRow * chunkSizeCells;
+        const width = Math.min(chunkSizeCells, columns - originX);
+        const height = Math.min(chunkSizeCells, rows - originY);
+        const wordsPerRow = Math.ceil(width / 32);
+        const chunk: TerrainChunk = {
+          id: { column: chunkColumn, row: chunkRow },
+          originX,
+          originY,
+          width,
+          height,
+          wordsPerRow,
+          collision: new Uint32Array(wordsPerRow * height),
+          revision: 0,
+          dirty: false,
+        };
+        this.mutableChunks.push(chunk);
+      }
+    this.chunks = this.mutableChunks;
+    this.rebuildCollisionMask();
+    this.lastChange = this.emptyChange();
   }
 
   getMaterialAtCell(column: number, row: number): TerrainMaterialId {
-    if (
-      !Number.isInteger(column) ||
-      !Number.isInteger(row) ||
-      column < 0 ||
-      row < 0 ||
-      column >= this.columns ||
-      row >= this.rows
-    )
-      return TerrainMaterialId.Air;
+    if (!this.isInBounds(column, row)) return TerrainMaterialId.Air;
     return this.cells[row * this.columns + column] as TerrainMaterialId;
   }
 
@@ -43,8 +92,15 @@ export class TerrainGrid {
     return this.getMaterialAtCell(cell.x, cell.y);
   }
 
+  /** Approximately O(1); storage layout is intentionally hidden from callers. */
   isSolid(column: number, row: number): boolean {
-    return this.getMaterialAtCell(column, row) !== TerrainMaterialId.Air;
+    this.collisionQueryCount++;
+    if (!this.isInBounds(column, row)) return false;
+    const chunk = this.chunkAtCell(column, row)!;
+    const localX = column - chunk.originX;
+    const localY = row - chunk.originY;
+    const word = chunk.collision[localY * chunk.wordsPerRow + (localX >>> 5)] ?? 0;
+    return (word & (1 << (localX & 31))) !== 0;
   }
 
   setSolid(column: number, row: number, solid: boolean): void {
@@ -52,21 +108,27 @@ export class TerrainGrid {
   }
 
   setMaterial(column: number, row: number, material: TerrainMaterialId): void {
-    if (
-      !Number.isInteger(column) ||
-      !Number.isInteger(row) ||
-      column < 0 ||
-      row < 0 ||
-      column >= this.columns ||
-      row >= this.rows
-    )
-      return;
+    if (!this.isInBounds(column, row)) return;
     const index = row * this.columns + column;
-    const value = material;
-    if (this.cells[index] !== value) {
-      this.cells[index] = value;
-      this.version++;
-    }
+    if (this.cells[index] === material) return;
+    this.cells[index] = material;
+    const chunk = this.chunkAtCell(column, row)!;
+    this.writeCollisionBit(chunk, column - chunk.originX, row - chunk.originY, material !== 0);
+    const localX = column - chunk.originX;
+    const localY = row - chunk.originY;
+    this.publishChange(
+      new Map([
+        [
+          this.chunkIndex(chunk.id.column, chunk.id.row),
+          {
+            chunk,
+            dirtyRect: { minX: localX, minY: localY, maxX: localX, maxY: localY },
+          },
+        ],
+      ]),
+      { minX: column, minY: row, maxX: column, maxY: row },
+      1,
+    );
   }
 
   worldToCell(position: Vec2): Vec2 {
@@ -78,69 +140,304 @@ export class TerrainGrid {
 
   findSurfaceY(x: number): number | null {
     const column = Math.floor(x / this.cellSizeMeters);
-    for (let row = 0; row < this.rows; row++)
-      if (this.isSolid(column, row)) return row * this.cellSizeMeters;
+    if (column < 0 || column >= this.columns) return null;
+    const chunkColumn = Math.floor(column / this.chunkSizeCells);
+    for (let chunkRow = 0; chunkRow < this.chunkRows; chunkRow++) {
+      const chunk = this.mutableChunks[this.chunkIndex(chunkColumn, chunkRow)]!;
+      const localX = column - chunk.originX;
+      const wordIndex = localX >>> 5;
+      const mask = 1 << (localX & 31);
+      for (let localY = 0; localY < chunk.height; localY++) {
+        this.collisionQueryCount++;
+        if (((chunk.collision[localY * chunk.wordsPerRow + wordIndex] ?? 0) & mask) !== 0)
+          return (chunk.originY + localY) * this.cellSizeMeters;
+      }
+    }
     return null;
   }
 
-  /** Remove cells whose centers lie in the circle; publish one version per edit. */
-  removeCircle(center: Vec2, radius: number): number {
+  getChunk(id: TerrainChunkId): TerrainChunk | undefined {
+    if (id.column < 0 || id.row < 0 || id.column >= this.chunkColumns || id.row >= this.chunkRows)
+      return undefined;
+    return this.mutableChunks[this.chunkIndex(id.column, id.row)];
+  }
+
+  /** Read-only journal lookup; renderers never acknowledge or mutate simulation dirtiness. */
+  getChangesSince(version: number): readonly TerrainChangeResult[] {
+    if (version >= this.version) return [];
+    const first = this.changeHistory[0];
+    if (!first || version < first.version - 1) return [this.fullChange()];
+    return this.changeHistory.filter((change) => change.version > version);
+  }
+
+  destroyCircle(center: Vec2, radius: number): TerrainChangeResult {
     if (
       !Number.isFinite(center.x) ||
       !Number.isFinite(center.y) ||
       !Number.isFinite(radius) ||
       radius <= 0
     )
-      return 0;
+      return this.emptyChange();
     const size = this.cellSizeMeters;
     const left = clamp(Math.floor((center.x - radius) / size), 0, this.columns - 1);
     const right = clamp(Math.floor((center.x + radius) / size), 0, this.columns - 1);
     const top = clamp(Math.floor((center.y - radius) / size), 0, this.rows - 1);
     const bottom = clamp(Math.floor((center.y + radius) / size), 0, this.rows - 1);
+    const radiusSquared = radius * radius;
+    const pending = new Map<number, PendingChunkChange>();
+    let dirtyRect: TerrainRect | undefined;
     let removed = 0;
-    for (let row = top; row <= bottom; row++)
-      for (let column = left; column <= right; column++) {
-        if (
-          ((column + 0.5) * size - center.x) ** 2 + ((row + 0.5) * size - center.y) ** 2 >
-          radius ** 2
-        )
-          continue;
-        const index = row * this.columns + column;
-        if (this.cells[index] !== TerrainMaterialId.Air) {
-          this.cells[index] = TerrainMaterialId.Air;
-          removed++;
-        }
-      }
-    if (removed > 0) this.version++;
-    return removed;
+    for (let row = top; row <= bottom; row++) {
+      const dy = (row + 0.5) * size - center.y;
+      const halfSpanSquared = radiusSquared - dy * dy;
+      if (halfSpanSquared < 0) continue;
+      const halfSpan = Math.sqrt(halfSpanSquared);
+      const spanLeft = clamp(Math.ceil((center.x - halfSpan) / size - 0.5), left, right);
+      const spanRight = clamp(Math.floor((center.x + halfSpan) / size - 0.5), left, right);
+      if (spanLeft > spanRight) continue;
+      const change = this.clearHorizontalSpan(row, spanLeft, spanRight, pending);
+      if (!change) continue;
+      removed += change.count;
+      dirtyRect = unionTerrainRect(dirtyRect, {
+        minX: change.minX,
+        minY: row,
+        maxX: change.maxX,
+        maxY: row,
+      });
+    }
+    return this.publishChange(pending, dirtyRect, removed);
   }
 
-  /** Rasterize a continuous capsule via cell-center distance to its segment. */
-  removeCapsule(from: Vec2, to: Vec2, radius: number): number {
-    if (![from.x, from.y, to.x, to.y, radius].every(Number.isFinite) || radius <= 0) return 0;
+  /** Compatibility return value for existing impact telemetry. */
+  removeCircle(center: Vec2, radius: number): number {
+    return this.destroyCircle(center, radius).modifiedPixels;
+  }
+
+  destroyCapsule(from: Vec2, to: Vec2, radius: number): TerrainChangeResult {
+    if (![from.x, from.y, to.x, to.y, radius].every(Number.isFinite) || radius <= 0)
+      return this.emptyChange();
     const dx = to.x - from.x;
     const dy = to.y - from.y;
     const lengthSquared = dx * dx + dy * dy;
-    if (lengthSquared === 0) return this.removeCircle(from, radius);
+    if (lengthSquared === 0) return this.destroyCircle(from, radius);
     const size = this.cellSizeMeters;
     const left = clamp(Math.floor((Math.min(from.x, to.x) - radius) / size), 0, this.columns - 1);
     const right = clamp(Math.floor((Math.max(from.x, to.x) + radius) / size), 0, this.columns - 1);
     const top = clamp(Math.floor((Math.min(from.y, to.y) - radius) / size), 0, this.rows - 1);
     const bottom = clamp(Math.floor((Math.max(from.y, to.y) + radius) / size), 0, this.rows - 1);
+    const pending = new Map<number, PendingChunkChange>();
+    let dirtyRect: TerrainRect | undefined;
     let removed = 0;
     for (let row = top; row <= bottom; row++)
-      for (let col = left; col <= right; col++) {
-        const px = (col + 0.5) * size - from.x;
+      for (let column = left; column <= right; column++) {
+        const px = (column + 0.5) * size - from.x;
         const py = (row + 0.5) * size - from.y;
         const t = clamp((px * dx + py * dy) / lengthSquared, 0, 1);
         if ((px - dx * t) ** 2 + (py - dy * t) ** 2 > radius * radius) continue;
-        const index = row * this.columns + col;
-        if (this.cells[index] !== TerrainMaterialId.Air) {
-          this.cells[index] = TerrainMaterialId.Air;
-          removed++;
-        }
+        const index = row * this.columns + column;
+        if (this.cells[index] === TerrainMaterialId.Air) continue;
+        this.cells[index] = TerrainMaterialId.Air;
+        const chunk = this.chunkAtCell(column, row)!;
+        const localX = column - chunk.originX;
+        const localY = row - chunk.originY;
+        this.writeCollisionBit(chunk, localX, localY, false);
+        this.addPendingChange(pending, chunk, {
+          minX: localX,
+          minY: localY,
+          maxX: localX,
+          maxY: localY,
+        });
+        dirtyRect = unionTerrainRect(dirtyRect, {
+          minX: column,
+          minY: row,
+          maxX: column,
+          maxY: row,
+        });
+        removed++;
       }
-    if (removed > 0) this.version++;
-    return removed;
+    return this.publishChange(pending, dirtyRect, removed);
+  }
+
+  removeCapsule(from: Vec2, to: Vec2, radius: number): number {
+    return this.destroyCapsule(from, to, radius).modifiedPixels;
+  }
+
+  resetInstrumentation(): void {
+    this.collisionQueryCount = 0;
+  }
+
+  private rebuildCollisionMask(): void {
+    for (const chunk of this.mutableChunks)
+      for (let localY = 0; localY < chunk.height; localY++)
+        for (let wordIndex = 0; wordIndex < chunk.wordsPerRow; wordIndex++) {
+          let word = 0;
+          const firstX = wordIndex * 32;
+          const lastX = Math.min(chunk.width, firstX + 32);
+          for (let localX = firstX; localX < lastX; localX++)
+            if (
+              this.cells[(chunk.originY + localY) * this.columns + chunk.originX + localX] !==
+              TerrainMaterialId.Air
+            )
+              word |= 1 << (localX & 31);
+          chunk.collision[localY * chunk.wordsPerRow + wordIndex] = word;
+        }
+  }
+
+  private isInBounds(column: number, row: number): boolean {
+    return (
+      Number.isInteger(column) &&
+      Number.isInteger(row) &&
+      column >= 0 &&
+      row >= 0 &&
+      column < this.columns &&
+      row < this.rows
+    );
+  }
+
+  private chunkIndex(column: number, row: number): number {
+    return row * this.chunkColumns + column;
+  }
+
+  private chunkAtCell(column: number, row: number): TerrainChunk | undefined {
+    return this.mutableChunks[
+      this.chunkIndex(
+        Math.floor(column / this.chunkSizeCells),
+        Math.floor(row / this.chunkSizeCells),
+      )
+    ];
+  }
+
+  private writeCollisionBit(
+    chunk: TerrainChunk,
+    localX: number,
+    localY: number,
+    solid: boolean,
+  ): void {
+    const index = localY * chunk.wordsPerRow + (localX >>> 5);
+    const mask = 1 << (localX & 31);
+    const word = chunk.collision[index] ?? 0;
+    chunk.collision[index] = solid ? word | mask : word & ~mask;
+  }
+
+  private clearHorizontalSpan(
+    row: number,
+    left: number,
+    right: number,
+    pending: Map<number, PendingChunkChange>,
+  ): { count: number; minX: number; maxX: number } | null {
+    let count = 0;
+    let changedMin = Infinity;
+    let changedMax = -Infinity;
+    let column = left;
+    while (column <= right) {
+      const chunk = this.chunkAtCell(column, row)!;
+      const partRight = Math.min(right, chunk.originX + chunk.width - 1);
+      let partCount = 0;
+      let partMin = Infinity;
+      let partMax = -Infinity;
+      for (let x = column; x <= partRight; x++) {
+        if (this.cells[row * this.columns + x] === TerrainMaterialId.Air) continue;
+        partCount++;
+        partMin = Math.min(partMin, x);
+        partMax = Math.max(partMax, x);
+      }
+      if (partCount > 0) {
+        this.cells.fill(
+          TerrainMaterialId.Air,
+          row * this.columns + column,
+          row * this.columns + partRight + 1,
+        );
+        const localY = row - chunk.originY;
+        this.clearCollisionSpan(chunk, localY, column - chunk.originX, partRight - chunk.originX);
+        this.addPendingChange(pending, chunk, {
+          minX: column - chunk.originX,
+          minY: localY,
+          maxX: partRight - chunk.originX,
+          maxY: localY,
+        });
+        count += partCount;
+        changedMin = Math.min(changedMin, partMin);
+        changedMax = Math.max(changedMax, partMax);
+      }
+      column = partRight + 1;
+    }
+    return count > 0 ? { count, minX: changedMin, maxX: changedMax } : null;
+  }
+
+  private clearCollisionSpan(
+    chunk: TerrainChunk,
+    localY: number,
+    localLeft: number,
+    localRight: number,
+  ): void {
+    const firstWord = localLeft >>> 5;
+    const lastWord = localRight >>> 5;
+    const rowOffset = localY * chunk.wordsPerRow;
+    for (let wordIndex = firstWord; wordIndex <= lastWord; wordIndex++) {
+      const startBit = wordIndex === firstWord ? localLeft & 31 : 0;
+      const endBit = wordIndex === lastWord ? localRight & 31 : 31;
+      const leftMask = 0xffffffff << startBit;
+      const rightMask = 0xffffffff >>> (31 - endBit);
+      const mask = leftMask & rightMask;
+      const index = rowOffset + wordIndex;
+      chunk.collision[index] = (chunk.collision[index] ?? 0) & ~mask;
+    }
+  }
+
+  private addPendingChange(
+    pending: Map<number, PendingChunkChange>,
+    chunk: TerrainChunk,
+    dirtyRect: TerrainRect,
+  ): void {
+    const index = this.chunkIndex(chunk.id.column, chunk.id.row);
+    const existing = pending.get(index);
+    if (existing) existing.dirtyRect = unionTerrainRect(existing.dirtyRect, dirtyRect);
+    else pending.set(index, { chunk, dirtyRect: { ...dirtyRect } });
+  }
+
+  private publishChange(
+    pending: Map<number, PendingChunkChange>,
+    dirtyRect: TerrainRect | undefined,
+    modifiedPixels: number,
+  ): TerrainChangeResult {
+    if (modifiedPixels <= 0 || !dirtyRect) return this.emptyChange();
+    this.version++;
+    this.totalModifiedPixels += modifiedPixels;
+    const affectedChunks: TerrainChunkChange[] = [];
+    for (const { chunk, dirtyRect: localRect } of pending.values()) {
+      chunk.revision = this.version;
+      chunk.dirty = true;
+      chunk.dirtyRect = unionTerrainRect(chunk.dirtyRect, localRect);
+      affectedChunks.push({ id: { ...chunk.id }, dirtyRect: { ...localRect } });
+    }
+    affectedChunks.sort((a, b) => a.id.row - b.id.row || a.id.column - b.id.column);
+    const result: TerrainChangeResult = {
+      changed: true,
+      dirtyRect: { ...dirtyRect },
+      affectedChunks,
+      modifiedPixels,
+      version: this.version,
+    };
+    this.lastChange = result;
+    this.changeHistory.push(result);
+    if (this.changeHistory.length > maxChangeHistory) this.changeHistory.shift();
+    return result;
+  }
+
+  private emptyChange(): TerrainChangeResult {
+    return { changed: false, affectedChunks: [], modifiedPixels: 0, version: this.version };
+  }
+
+  private fullChange(): TerrainChangeResult {
+    return {
+      changed: true,
+      dirtyRect: { minX: 0, minY: 0, maxX: this.columns - 1, maxY: this.rows - 1 },
+      affectedChunks: this.mutableChunks.map((chunk) => ({
+        id: { ...chunk.id },
+        dirtyRect: { minX: 0, minY: 0, maxX: chunk.width - 1, maxY: chunk.height - 1 },
+      })),
+      modifiedPixels: this.columns * this.rows,
+      version: this.version,
+    };
   }
 }

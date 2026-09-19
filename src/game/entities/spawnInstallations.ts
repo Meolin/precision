@@ -17,12 +17,16 @@ export function spawnInstallations(terrain: TerrainGrid, config: GameConfig): In
     for (const playerId of [1, 2]) {
       const weaponId = loadout[slot] ?? 'basicCannon';
       const installation = spawnCannon(terrain, config);
-      const fraction = playerId === 1
-        ? config.cannon.spawnXFraction + slot * 0.065
-        : 0.72 + slot * 0.065;
+      const fraction =
+        playerId === 1 ? config.cannon.spawnXFraction + slot * 0.065 : 0.72 + slot * 0.065;
       const x = config.world.widthMeters * fraction;
-      if (x - radius < 0 || x + radius > config.world.widthMeters ||
-          installations.some((other) => Math.abs(other.position.x - x) < radius + other.hitbox.radiusMeters))
+      if (
+        x - radius < 0 ||
+        x + radius > config.world.widthMeters ||
+        installations.some(
+          (other) => Math.abs(other.position.x - x) < radius + other.hitbox.radiusMeters,
+        )
+      )
         throw new Error('World is too narrow for non-overlapping installation spawns.');
       installation.id = slot * 2 + playerId;
       installation.teamId = playerId;

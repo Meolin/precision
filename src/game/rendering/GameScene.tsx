@@ -6,6 +6,8 @@ import type { DebugOptions } from './DebugOptions';
 import { SceneRenderer } from './SceneRenderer';
 import type { RtsController } from '../client/RtsController';
 import type { ShaderSettings } from './ShaderSettings';
+import type { TerrainSmoothingSettings } from './TerrainSmoothingSettings';
+import type { BuildingAnimationPreview } from '../buildings/BuildingAnimationPreview';
 
 extend({ Container });
 
@@ -14,11 +16,15 @@ export function GameScene({
   controls,
   debug,
   shaders,
+  terrainSmoothing,
+  buildingPreview,
 }: {
   runtime: GameRuntime;
   controls: RtsController;
   debug: DebugOptions;
   shaders: ShaderSettings;
+  terrainSmoothing: TerrainSmoothingSettings;
+  buildingPreview?: BuildingAnimationPreview;
 }) {
   const { app } = useApplication();
   const root = useRef<Container>(null);
@@ -43,11 +49,13 @@ export function GameScene({
         controls,
         debug,
         shaders,
+        terrainSmoothing,
+        buildingPreview,
         app.screen.width,
         app.screen.height,
       );
     },
-    [app, runtime, controls, debug, shaders],
+    [app, runtime, controls, debug, shaders, terrainSmoothing, buildingPreview],
   );
   useTick(frame);
   return <pixiContainer ref={root} />;

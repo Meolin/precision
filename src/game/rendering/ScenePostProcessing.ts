@@ -27,7 +27,7 @@ import { WorldLightmapFilter, WorldShockwaveFilter } from './WorldSpaceFilters';
 interface Layers {
   content: Container;
   background: Graphics;
-  terrain: Sprite;
+  terrain: Container;
   cannonBases: Container;
 }
 
@@ -86,15 +86,15 @@ export class ScenePostProcessing {
     const enabled = (id: ShaderId) => settings.enabled && settings.effects[id].enabled;
     const value = (id: ShaderId, key: string) => shaderValue(settings, id, key);
     // Bound full-scene passes to the camera, not the entire enlarged map.
-    // Pixi v8 filterArea is local: content uses meters, terrain uses texture cells.
+    // Both content and the chunk container use world meters as local coordinates.
     this.area.x = viewport.worldX;
     this.area.y = viewport.worldY;
     this.area.width = viewport.worldWidth;
     this.area.height = viewport.worldHeight;
-    this.terrainArea.x = viewport.worldX / state.terrain.cellSizeMeters;
-    this.terrainArea.y = viewport.worldY / state.terrain.cellSizeMeters;
-    this.terrainArea.width = viewport.worldWidth / state.terrain.cellSizeMeters;
-    this.terrainArea.height = viewport.worldHeight / state.terrain.cellSizeMeters;
+    this.terrainArea.x = viewport.worldX;
+    this.terrainArea.y = viewport.worldY;
+    this.terrainArea.width = viewport.worldWidth;
+    this.terrainArea.height = viewport.worldHeight;
     this.mapSprite.width = state.terrain.columns * state.terrain.cellSizeMeters;
     this.mapSprite.height = state.terrain.rows * state.terrain.cellSizeMeters;
     if (this.stateIdentity !== state) {

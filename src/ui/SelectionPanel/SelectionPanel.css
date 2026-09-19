@@ -1,17 +1,93 @@
-.selection-panel { padding: 16px; margin-top: 14px; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; }
-.selection-heading, .selection-actions, .control-groups { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
-.selection-heading { justify-content: space-between; margin-bottom: 12px; font-size: 12px; }
-.selection-heading strong { color: var(--accent); }
-.selection-heading span, .selection-hint { color: var(--muted); }
-.selection-actions button, .selection-actions select { font: inherit; font-size: 12px; }
-.selection-actions select { max-width: 100%; padding: 8px; background: #222c2e; color: var(--text); border: 1px solid #354143; border-radius: 5px; }
-.selection-actions button[aria-pressed='true'] { border-color: var(--accent); color: var(--accent); }
-.selection-hint { font-size: 12px; line-height: 1.6; }
-.control-groups button { display: flex; align-items: center; gap: 7px; padding: 6px 9px; font-size: 11px; }
-.selection-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(210px, 100%), 1fr)); gap: 8px; margin-top: 12px; }
-.selection-card { min-width: 0; display: flex; flex-direction: column; gap: 7px; padding: 10px; background: #121b1d; border: 1px solid var(--border); font-size: 11px; }
-.selection-card meter { width: 100%; height: 8px; accent-color: var(--accent); }
-.selection-card .installation-name { text-align: left; color: var(--accent); font-size: 12px; }
-.selection-card ol { margin: 8px 0; padding-left: 20px; line-height: 1.6; }
-.selection-card .order-failure { color: #f5af73; }
-.game-surface { touch-action: none; user-select: none; }
+.selection-panel {
+  padding: 16px;
+  margin-top: 14px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.selection-heading,
+.selection-actions,
+.control-groups {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.selection-heading {
+  justify-content: space-between;
+  margin-bottom: 12px;
+  font-size: 12px;
+}
+.selection-heading strong {
+  color: var(--accent);
+}
+.selection-heading span,
+.selection-hint {
+  color: var(--muted);
+}
+.selection-actions button,
+.selection-actions select {
+  font: inherit;
+  font-size: 12px;
+}
+.selection-actions select {
+  max-width: 100%;
+  padding: 8px;
+  background: #222c2e;
+  color: var(--text);
+  border: 1px solid #354143;
+  border-radius: 5px;
+}
+.selection-actions button[aria-pressed='true'] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.selection-hint {
+  font-size: 12px;
+  line-height: 1.6;
+}
+.control-groups button {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 9px;
+  font-size: 11px;
+}
+.selection-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(210px, 100%), 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+.selection-card {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 10px;
+  background: #121b1d;
+  border: 1px solid var(--border);
+  font-size: 11px;
+}
+.selection-card meter {
+  width: 100%;
+  height: 8px;
+  accent-color: var(--accent);
+}
+.selection-card .installation-name {
+  text-align: left;
+  color: var(--accent);
+  font-size: 12px;
+}
+.selection-card ol {
+  margin: 8px 0;
+  padding-left: 20px;
+  line-height: 1.6;
+}
+.selection-card .order-failure {
+  color: #f5af73;
+}
+.game-surface {
+  touch-action: none;
+  user-select: none;
+}

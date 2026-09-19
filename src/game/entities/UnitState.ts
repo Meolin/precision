@@ -53,7 +53,9 @@ export function cloneUnit<T extends UnitState>(unit: T): T {
           grounding: { ...unit.grounding },
           fireControl: {
             ...unit.fireControl,
-            lastSolution: unit.fireControl.lastSolution ? { ...unit.fireControl.lastSolution } : null,
+            lastSolution: unit.fireControl.lastSolution
+              ? { ...unit.fireControl.lastSolution }
+              : null,
           },
         }
       : {}),

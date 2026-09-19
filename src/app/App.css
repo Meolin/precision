@@ -123,6 +123,30 @@ kbd {
   color: var(--muted);
   font-size: 11px;
 }
+.header-tools {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+.view-tabs {
+  display: flex;
+  padding: 2px;
+  border: 1px solid #33413f;
+  border-radius: 5px;
+  background: #151e20;
+}
+.view-tabs button {
+  padding: 7px 13px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font: 9px var(--mono);
+  letter-spacing: 0.4px;
+}
+.view-tabs button.is-active {
+  background: #2d3a36;
+  color: var(--accent);
+}
 .status-dot {
   width: 6px;
   height: 6px;

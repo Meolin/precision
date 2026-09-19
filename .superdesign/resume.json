@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "targets": {
+    "animation-sandbox": {
+      "targetKind": "new-ui",
+      "projectId": "ad9ddb7d-5721-492a-9d9b-90481f6aa014",
+      "activeDraftId": "bedbb78b-e1e1-4ab7-bf93-bcbce21de4b1",
+      "designSystemPath": ".superdesign/design-system.md",
+      "contextFiles": [
+        ".superdesign/design-system.md",
+        "src/app/App.css",
+        "src/app/App.tsx",
+        "src/ui/TechnicalPanel/TechnicalPanel.css",
+        "src/ui/TechnicalPanel/TechnicalPanel.tsx:348:959",
+        ".superdesign/init/theme.md"
+      ],
+      "fingerprints": {
+        ".superdesign/design-system.md": "cdbc8fb057216cc44e5ad373d7427e84687fb83028a484b2e402eac915080fff",
+        "src/app/App.css": "6f47474a52caf091729f250115f9682e2d8b962ebed018c141dd289de465f329",
+        "src/app/App.tsx": "bfe0e8406036a81be655a3a6b44d0cec8a71c302cd1d274d25a7e7546bb7304d",
+        "src/ui/TechnicalPanel/TechnicalPanel.css": "0b2e1bed2dc8234156ed17b9cc0b869a69c771f939449290ee55febe1d815071",
+        "src/ui/TechnicalPanel/TechnicalPanel.tsx": "4edf0ec1d9d936ee4e166a48928b8369cbd0b4d170c7ad92b1fcd1dce2728bd7",
+        ".superdesign/init/theme.md": "6c3459def6e1cfc6e322d8572c0e4fc8c8ade59cb57eb674d27f5d86ade459a8"
+      },
+      "drafts": {
+        "bedbb78b-e1e1-4ab7-bf93-bcbce21de4b1": {
+          "title": "Animation Sandbox Workbench",
+          "visualDirection": "dense Ballistics Lab developer workbench",
+          "currentVersion": 1
+        }
+      },
+      "updatedAt": "2026-09-19T13:04:58.7979898Z"
+    }
+  }
+}

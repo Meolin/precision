@@ -33,6 +33,7 @@ export const defaultGameConfig: GameConfig = {
   weaponOverrides: {},
   terrain: {
     cellSizeMeters: 0.2,
+    chunkSizeCells: 256,
     surfaceHeightFraction: 0.7,
     waveAmplitudeMeters: 4.2,
     noiseAmplitudeMeters: 1,
@@ -165,6 +166,7 @@ export function validateConfig(input: GameConfig): GameConfig {
     config.world.heightMeters,
     config.world.pixelsPerMeter,
     config.terrain.cellSizeMeters,
+    config.terrain.chunkSizeCells,
     config.cannon.barrelLengthMeters,
     config.cannon.mountHeightMeters,
     config.preview.maxSeconds,
@@ -172,6 +174,8 @@ export function validateConfig(input: GameConfig): GameConfig {
   ];
   if (positive.some((value) => !Number.isFinite(value) || value <= 0))
     throw new Error('Dimensions, clock and preview bounds must be finite and positive.');
+  if (!Number.isInteger(config.terrain.chunkSizeCells))
+    throw new Error('Terrain chunk size must be a positive integer.');
   if (
     Math.ceil(config.world.widthMeters / config.terrain.cellSizeMeters) *
       Math.ceil(config.world.heightMeters / config.terrain.cellSizeMeters) >

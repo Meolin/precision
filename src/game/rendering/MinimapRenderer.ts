@@ -1,16 +1,18 @@
-import { Container, Graphics, Sprite, Text, type Texture } from 'pixi.js';
+import { Container, Graphics, Sprite, Text } from 'pixi.js';
 import type { RtsController } from '../client/RtsController';
 import type { GameRuntime } from '../core/GameRuntime';
 import { hitboxCenter } from '../entities/Hitbox';
 import { clamp } from '../math/Vec2';
 import { minimapLayout } from './minimapViewport';
 import { worldToScreen } from './viewport';
+import type { TerrainLayer } from './TerrainLayer';
 
-/** Screen-space overlay sharing the terrain texture, without a second terrain render. */
+/** Screen-space overlay reusing TerrainLayer chunk textures without rerasterizing terrain. */
 export class MinimapRenderer {
   readonly container = new Container();
   private background = new Graphics();
-  private terrain = new Sprite();
+  private terrain = new Container();
+  private terrainChunks = new Map<string, Sprite>();
   private units = new Graphics();
   private camera = new Graphics();
   private title = new Text({
@@ -27,7 +29,7 @@ export class MinimapRenderer {
   draw(
     runtime: GameRuntime,
     controls: RtsController,
-    texture: Texture,
+    terrainLayer: TerrainLayer,
     width: number,
     height: number,
   ): void {
@@ -48,11 +50,28 @@ export class MinimapRenderer {
         .fill(0x223037);
       this.title.position.set(panel.x + 8, panel.y + 6);
     }
-    // TerrainLayer owns this texture and updates it after every terrain edit.
-    this.terrain.texture = texture;
-    this.terrain.position.set(viewport.offsetX, viewport.offsetY);
-    this.terrain.width = viewport.width;
-    this.terrain.height = viewport.height;
+    const liveKeys = new Set<string>();
+    for (const source of terrainLayer.getVisualChunks()) {
+      const key = `${source.chunkColumn}:${source.chunkRow}`;
+      liveKeys.add(key);
+      let sprite = this.terrainChunks.get(key);
+      if (!sprite) {
+        sprite = new Sprite(source.texture);
+        this.terrainChunks.set(key, sprite);
+        this.terrain.addChild(sprite);
+      } else sprite.texture = source.texture;
+      sprite.position.set(
+        viewport.offsetX + (source.sprite.x / world.widthMeters) * viewport.width,
+        viewport.offsetY + (source.sprite.y / world.heightMeters) * viewport.height,
+      );
+      sprite.width = (source.sprite.width / world.widthMeters) * viewport.width;
+      sprite.height = (source.sprite.height / world.heightMeters) * viewport.height;
+    }
+    for (const [key, sprite] of this.terrainChunks) {
+      if (liveKeys.has(key)) continue;
+      this.terrainChunks.delete(key);
+      sprite.destroy();
+    }
 
     this.units.clear();
     for (const unit of runtime.getState().units) {
@@ -90,7 +109,7 @@ export class MinimapRenderer {
   }
 
   destroy(): void {
-    // Do not destroy the terrain texture: the main scene still owns it.
+    // Child sprites reference textures owned by the main terrain layer.
     this.container.destroy({ children: true });
   }
 }

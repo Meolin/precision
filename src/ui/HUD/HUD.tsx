@@ -15,7 +15,13 @@ export function HUD({ runtime, controls }: { runtime: GameRuntime; controls: Rts
     <>
       <div className="weapon-status" aria-label="Выбранное оружие">
         <span>
-          <b>{shooter ? data.weaponName : data.mixedWeapons ? 'Оружие: Mixed' : 'Управление батареей'}</b>
+          <b>
+            {shooter
+              ? data.weaponName
+              : data.mixedWeapons
+                ? 'Оружие: Mixed'
+                : 'Управление батареей'}
+          </b>
           {shooter ? ` / ${data.projectileName}` : ` · выбрано ${data.selectedIds.length}`}
           {shooter && data.weaponPending ? ' · в очереди' : ''}
         </span>
@@ -23,29 +29,33 @@ export function HUD({ runtime, controls }: { runtime: GameRuntime; controls: Rts
           {!shooter
             ? 'Ручная стрельба: выберите одну установку'
             : !data.shooterAlive
-            ? 'Орудие уничтожено'
-            : data.cooldownRemaining > 0
-              ? `До выстрела ${formatNumber(data.cooldownRemaining, 1)} s`
-              : 'Готово к выстрелу'}
+              ? 'Орудие уничтожено'
+              : data.cooldownRemaining > 0
+                ? `До выстрела ${formatNumber(data.cooldownRemaining, 1)} s`
+                : 'Готово к выстрелу'}
         </span>
       </div>
-      {shooter && <div className="hud" aria-label="Параметры выстрела">
-        {values.map((item, index) => (
-          <div className={`hud-item ${index === 3 ? 'accent-value' : ''}`} key={item.label}>
-            <span className="eyebrow">{item.label}</span>
-            <div className="hud-value">
-              {item.value}
-              <span>{item.unit}</span>
+      {shooter && (
+        <div className="hud" aria-label="Параметры выстрела">
+          {values.map((item, index) => (
+            <div className={`hud-item ${index === 3 ? 'accent-value' : ''}`} key={item.label}>
+              <span className="eyebrow">{item.label}</span>
+              <div className="hud-value">
+                {item.value}
+                <span>{item.unit}</span>
+              </div>
             </div>
-          </div>
-        ))}
-      </div>}
-      {shooter && <p className="movement-status" aria-label="Позиция установки">
-        Установка #{shooter.id} · Стационарная ·{' '}
-        Позиция {formatNumber(shooter?.position.x ?? null, 1)} /{' '}
-        {formatNumber(shooter?.position.y ?? null, 1)} m{' · '}
-        {shooter.grounding.grounded ? 'Есть опора' : 'Нет опоры'}
-      </p>}
+          ))}
+        </div>
+      )}
+      {shooter && (
+        <p className="movement-status" aria-label="Позиция установки">
+          Установка #{shooter.id} · Стационарная · Позиция{' '}
+          {formatNumber(shooter?.position.x ?? null, 1)} /{' '}
+          {formatNumber(shooter?.position.y ?? null, 1)} m{' · '}
+          {shooter.grounding.grounded ? 'Есть опора' : 'Нет опоры'}
+        </p>
+      )}
     </>
   );
 }

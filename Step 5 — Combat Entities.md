@@ -369,9 +369,7 @@ export interface CircleHitbox {
 API должен позволять позже добавить:
 
 ```ts
-type Hitbox =
-  | CircleHitbox
-  | AabbHitbox;
+type Hitbox = CircleHitbox | AabbHitbox;
 ```
 
 Но Step 5 может использовать только CircleHitbox.
@@ -394,7 +392,7 @@ current position
 Не делать:
 
 ```ts
-distance(projectile.position, unit.position) < radius
+distance(projectile.position, unit.position) < radius;
 ```
 
 только в текущей позиции.
@@ -410,12 +408,7 @@ distance(projectile.position, unit.position) < radius
 Например:
 
 ```ts
-segmentCircleIntersection(
-  from,
-  to,
-  circleCenter,
-  circleRadius
-)
+segmentCircleIntersection(from, to, circleCenter, circleRadius);
 ```
 
 Результат:
@@ -465,10 +458,7 @@ unitRadius + projectileRadius
 Для circle hitbox:
 
 ```ts
-normal =
-  normalize(
-    impactPoint - circleCenter
-  );
+normal = normalize(impactPoint - circleCenter);
 ```
 
 Normal должна быть finite и normalized.
@@ -486,9 +476,7 @@ Normal должна быть finite и normalized.
 Например:
 
 ```ts
-export type ProjectileCollisionCandidate =
-  | TerrainCollisionCandidate
-  | EntityCollisionCandidate;
+export type ProjectileCollisionCandidate = TerrainCollisionCandidate | EntityCollisionCandidate;
 ```
 
 ---
@@ -574,9 +562,7 @@ check entities
 После выбора nearest candidate вернуть:
 
 ```ts
-type ProjectileCollisionResult =
-  | TerrainCollisionResult
-  | EntityCollisionResult;
+type ProjectileCollisionResult = TerrainCollisionResult | EntityCollisionResult;
 ```
 
 ---
@@ -732,19 +718,13 @@ ImpactDefinition
 Начать с простой модели:
 
 ```ts
-damage =
-  kineticEnergyJ *
-  energyToDamageScale;
+damage = kineticEnergyJ * energyToDamageScale;
 ```
 
 После чего:
 
 ```ts
-damage = clamp(
-  damage,
-  minDamage,
-  maxDamage
-);
+damage = clamp(damage, minDamage, maxDamage);
 ```
 
 Никакой armor system пока нет.
@@ -1529,7 +1509,7 @@ maxSlopeAngle
 Добавить data/config parameter:
 
 ```ts
-maxSlopeAngleDeg
+maxSlopeAngleDeg;
 ```
 
 Например стартовое значение:

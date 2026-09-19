@@ -12,6 +12,9 @@ import cannonBaseUrl from '../assets/example_base.png';
 import { ScenePostProcessing } from './ScenePostProcessing';
 import type { ShaderSettings } from './ShaderSettings';
 import { MinimapRenderer } from './MinimapRenderer';
+import type { TerrainSmoothingSettings } from './TerrainSmoothingSettings';
+import { BuildingAnimationPlayer } from '../buildings/BuildingAnimationPlayer';
+import type { BuildingAnimationPreview } from '../buildings/BuildingAnimationPreview';
 
 // The source image is a 1448 × 1086 PNG. Its visible chassis ends at roughly
 // 78% of the image height, so this anchor places the tracks on the terrain.
@@ -47,9 +50,19 @@ export class SceneRenderer {
   private screenOverlay = new Graphics();
   private cannon = new Graphics();
   private units = new Graphics();
+  private terrainDebug = new Graphics();
+  private terrainDebugKey = '';
+  private terrainMetrics = new Text({
+    text: '',
+    style: { fontFamily: 'Consolas, monospace', fontSize: 11, fill: 0xd5ec84 },
+  });
   private debug = new Graphics();
   private labels = new Container();
   private damagePopups = new DamagePopupLayer();
+  private buildingLayer = new Container();
+  private buildingPlayer: BuildingAnimationPlayer | null = null;
+  private buildingConfigIdentity: BuildingAnimationPreview['config'] | null = null;
+  private buildingSourceRevision = -1;
   private staticKey = '';
   private previewKey: object | null = null;
   private previewVisible = false;
@@ -66,19 +79,22 @@ export class SceneRenderer {
     this.frame.addChild(this.world, this.screenOverlay);
     parent.addChild(this.frame, this.frameMask, this.minimap.container);
     this.frame.mask = this.frameMask;
-    this.content.addChild(this.background, this.terrain.sprite, this.cannonBases, this.cannon);
+    this.content.addChild(this.background, this.terrain.container, this.cannonBases, this.cannon);
     this.postProcessing = new ScenePostProcessing({
       content: this.content,
       background: this.background,
-      terrain: this.terrain.sprite,
+      terrain: this.terrain.container,
       cannonBases: this.cannonBases,
     });
     this.world.addChild(
       this.content,
       this.labels,
       this.trajectory,
+      this.buildingLayer,
       this.units,
       this.selection,
+      this.terrainDebug,
+      this.terrainMetrics,
       this.debug,
       this.damagePopups.container,
     );
@@ -89,6 +105,8 @@ export class SceneRenderer {
     controls: RtsController,
     options: DebugOptions,
     shaders: ShaderSettings,
+    terrainSmoothing: TerrainSmoothingSettings,
+    buildingPreview: BuildingAnimationPreview | undefined,
     width: number,
     height: number,
   ): void {
@@ -108,9 +126,15 @@ export class SceneRenderer {
     }
     this.world.position.set(viewport.offsetX, viewport.offsetY);
     this.world.scale.set(ppm);
-    this.terrain.update(state.terrain);
-    this.minimap.draw(runtime, controls, this.terrain.sprite.texture, width, height);
+    this.terrain.update(state.terrain, terrainSmoothing);
+    this.terrain.container.visible = options.terrainVisual;
+    this.minimap.draw(runtime, controls, this.terrain, width, height);
     this.damagePopups.update(runtime.getDamagePopups(), runtime.presentationTimeSeconds, pixel);
+    this.drawBuildingPreview(
+      buildingPreview,
+      state.terrain.findSurfaceY.bind(state.terrain),
+      config.world.widthMeters,
+    );
     const staticKey = `${width}:${height}:${ppm}:${config.world.widthMeters}:${config.world.heightMeters}:${options.grid}:${state.terrain.cellSizeMeters}`;
     if (this.staticKey !== staticKey) {
       this.staticKey = staticKey;
@@ -276,6 +300,68 @@ export class SceneRenderer {
     }
 
     this.postProcessing.update(runtime, shaders, viewport, this.baseSprites, selectedIds);
+    const terrainDebugKey = `${state.terrain.version}:${viewport.worldX}:${viewport.worldY}:${viewport.worldWidth}:${viewport.worldHeight}:${options.collisionMask}:${options.terrainChunks}:${options.terrainDirtyRects}`;
+    if (terrainDebugKey !== this.terrainDebugKey) {
+      this.terrainDebugKey = terrainDebugKey;
+      this.terrainDebug.clear();
+      const terrain = state.terrain;
+      const cell = terrain.cellSizeMeters;
+      if (options.collisionMask) {
+        const firstColumn = Math.max(0, Math.floor(viewport.worldX / cell));
+        const lastColumn = Math.min(
+          terrain.columns - 1,
+          Math.floor((viewport.worldX + viewport.worldWidth) / cell),
+        );
+        const firstRow = Math.max(0, Math.floor(viewport.worldY / cell));
+        const lastRow = Math.min(
+          terrain.rows - 1,
+          Math.floor((viewport.worldY + viewport.worldHeight) / cell),
+        );
+        for (let row = firstRow; row <= lastRow; row++) {
+          let spanStart = -1;
+          for (let column = firstColumn; column <= lastColumn + 1; column++) {
+            const solid = column <= lastColumn && terrain.isSolid(column, row);
+            if (solid && spanStart < 0) spanStart = column;
+            else if (!solid && spanStart >= 0) {
+              this.terrainDebug
+                .rect(spanStart * cell, row * cell, (column - spanStart) * cell, cell)
+                .fill({ color: 0x85d7e8, alpha: 0.28 });
+              spanStart = -1;
+            }
+          }
+        }
+      }
+      if (options.terrainChunks)
+        for (const chunk of terrain.chunks)
+          this.terrainDebug
+            .rect(
+              chunk.originX * cell,
+              chunk.originY * cell,
+              chunk.width * cell,
+              chunk.height * cell,
+            )
+            .stroke({ color: 0xffd166, width: 1.5 * pixel, alpha: 0.9 });
+      const dirty = terrain.lastChange.dirtyRect;
+      if (options.terrainDirtyRects && dirty)
+        this.terrainDebug
+          .rect(
+            dirty.minX * cell,
+            dirty.minY * cell,
+            (dirty.maxX - dirty.minX + 1) * cell,
+            (dirty.maxY - dirty.minY + 1) * cell,
+          )
+          .fill({ color: 0xed85ac, alpha: 0.12 })
+          .stroke({ color: 0xed85ac, width: 1.5 * pixel, alpha: 0.95 });
+    }
+    const showTerrainMetrics =
+      options.collisionMask || options.terrainChunks || options.terrainDirtyRects;
+    this.terrainMetrics.visible = showTerrainMetrics;
+    if (showTerrainMetrics) {
+      const change = state.terrain.lastChange;
+      this.terrainMetrics.text = `terrain q=${state.terrain.collisionQueryCount} · changed=${change.modifiedPixels} px · chunks=${change.affectedChunks.length} · visual=${this.terrain.metrics.visualUpdateMs.toFixed(2)} ms`;
+      this.terrainMetrics.scale.set(pixel);
+      this.terrainMetrics.position.set(viewport.worldX + 8 * pixel, viewport.worldY + 8 * pixel);
+    }
     this.debug.clear();
     const lastExplosion = runtime.getLastExplosion();
     if (lastExplosion) {
@@ -458,12 +544,55 @@ export class SceneRenderer {
     this.labels.addChild(cannonLabel);
   }
 
+  private drawBuildingPreview(
+    preview: BuildingAnimationPreview | undefined,
+    findSurfaceY: (x: number) => number | null,
+    worldWidth: number,
+  ): void {
+    if (!preview?.visible) {
+      this.buildingLayer.visible = false;
+      return;
+    }
+    this.buildingLayer.visible = true;
+    this.buildingLayer.alpha = Math.min(1, Math.max(0, preview.opacity));
+    const resolver = (assetId: string) => preview.sourceUrls[assetId] ?? assetId;
+    if (!this.buildingPlayer) {
+      this.buildingPlayer = new BuildingAnimationPlayer({
+        config: preview.config,
+        resolveTexture: resolver,
+      });
+      this.buildingLayer.addChild(this.buildingPlayer.container);
+      this.buildingConfigIdentity = preview.config;
+      this.buildingSourceRevision = preview.sourceRevision;
+    } else if (
+      this.buildingConfigIdentity !== preview.config ||
+      this.buildingSourceRevision !== preview.sourceRevision
+    ) {
+      const reloadTextures = this.buildingSourceRevision !== preview.sourceRevision;
+      this.buildingConfigIdentity = preview.config;
+      this.buildingSourceRevision = preview.sourceRevision;
+      void this.buildingPlayer.setConfig(preview.config, resolver, reloadTextures);
+    }
+    const x = preview.position?.x ?? worldWidth * 0.5;
+    const y = preview.position?.y ?? findSurfaceY(x) ?? 0;
+    this.buildingLayer.position.set(x, y);
+    this.buildingLayer.scale.set(
+      preview.config.worldSize.widthMeters / preview.config.alphaBounds.width,
+      preview.config.worldSize.heightMeters / preview.config.alphaBounds.height,
+    );
+    this.buildingPlayer.setProgress(preview.progress);
+    this.buildingPlayer.setOnionSkin(preview.onionSkinStageIndex);
+    this.buildingPlayer.setHitboxVisible(preview.showHitbox);
+  }
+
   destroy(): void {
     this.disposed = true;
     this.postProcessing.destroy();
     this.minimap.destroy();
     this.terrain.destroy();
     this.damagePopups.destroy();
+    this.buildingPlayer?.destroy();
+    this.buildingPlayer = null;
     this.frame.mask = null;
     this.parent.removeChild(this.frame, this.frameMask);
     this.frameMask.destroy();

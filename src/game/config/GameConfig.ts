@@ -32,6 +32,7 @@ export interface GameConfig {
   weaponOverrides: Partial<Record<WeaponId, WeaponOverrides>>;
   terrain: {
     cellSizeMeters: number;
+    chunkSizeCells: number;
     surfaceHeightFraction: number;
     waveAmplitudeMeters: number;
     noiseAmplitudeMeters: number;

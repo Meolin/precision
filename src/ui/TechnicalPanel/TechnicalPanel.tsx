@@ -24,6 +24,11 @@ import type { ShaderSettings } from '../../game/rendering/ShaderSettings';
 import { ShaderControls } from './ShaderControls';
 import { cameraZoom } from '../../game/client/CameraController';
 import { cameraFrame } from '../../game/config/worldLayout';
+import {
+  defaultTerrainSmoothingSettings,
+  isTerrainSmoothingQuality,
+  type TerrainSmoothingSettings,
+} from '../../game/rendering/TerrainSmoothingSettings';
 
 interface Props {
   runtime: GameRuntime;
@@ -32,6 +37,8 @@ interface Props {
   debug: DebugOptions;
   shaders: ShaderSettings;
   onShaders: (settings: ShaderSettings) => void;
+  terrainSmoothing: TerrainSmoothingSettings;
+  onTerrainSmoothing: (settings: TerrainSmoothingSettings) => void;
   paused: boolean;
   onSetting: (setting: NumericSetting, value: number) => void;
   onDamagePopupCurve: (curve: DamagePopupVelocityCurve) => void;
@@ -322,6 +329,10 @@ const groups: { section: EditableSection; title: string; number: string }[] = [
   { section: 'physics', title: 'Физика мира', number: '02' },
 ];
 const debugLabels: { key: keyof DebugOptions; label: string }[] = [
+  { key: 'terrainVisual', label: 'Визуальный рельеф' },
+  { key: 'collisionMask', label: 'CPU collision mask' },
+  { key: 'terrainChunks', label: 'Границы terrain chunks' },
+  { key: 'terrainDirtyRects', label: 'Dirty rectangles' },
   { key: 'trajectory', label: 'Прогноз траектории' },
   { key: 'velocity', label: 'Вектор скорости' },
   { key: 'impact', label: 'Маркер попадания' },
@@ -341,6 +352,8 @@ export function TechnicalPanel({
   debug,
   shaders,
   onShaders,
+  terrainSmoothing,
+  onTerrainSmoothing,
   paused,
   onSetting,
   onDamagePopupCurve,
@@ -411,6 +424,49 @@ export function TechnicalPanel({
           ariaLabel="Шейдеры и эффекты"
         >
           <ShaderControls settings={shaders} onChange={onShaders} />
+        </CollapsibleSettingsGroup>
+        <CollapsibleSettingsGroup
+          title="Сглаживание рельефа"
+          meta={terrainSmoothing.enabled ? `${terrainSmoothing.quality}×` : 'ВЫКЛ'}
+          ariaLabel="Сглаживание рельефа"
+        >
+          <label className="check-row">
+            <input
+              type="checkbox"
+              checked={terrainSmoothing.enabled}
+              onChange={(event) =>
+                onTerrainSmoothing({ ...terrainSmoothing, enabled: event.target.checked })
+              }
+            />
+            <span>Включить сглаживание</span>
+          </label>
+          <div className="select-row">
+            <label htmlFor="terrain-smoothing-quality">Качество</label>
+            <select
+              id="terrain-smoothing-quality"
+              value={terrainSmoothing.quality}
+              disabled={!terrainSmoothing.enabled}
+              onChange={(event) => {
+                const quality = Number(event.target.value);
+                if (isTerrainSmoothingQuality(quality))
+                  onTerrainSmoothing({ ...terrainSmoothing, quality });
+              }}
+            >
+              <option value={1}>1×</option>
+              <option value={2}>2×</option>
+              <option value={4}>4×</option>
+            </select>
+          </div>
+          <p className="settings-note">
+            Изображение строится асинхронно; физическая сетка и столкновения не меняются.
+          </p>
+          <button
+            className="shader-reset"
+            type="button"
+            onClick={() => onTerrainSmoothing({ ...defaultTerrainSmoothingSettings })}
+          >
+            Сбросить настройки сглаживания
+          </button>
         </CollapsibleSettingsGroup>
         <CollapsibleSettingsGroup title="Сущности" meta="ENTITIES" ariaLabel="Сущности">
           <select

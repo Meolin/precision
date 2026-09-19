@@ -23,7 +23,13 @@ function scene() {
     unit.grounding.terrainVersion = -1;
     refreshUnitGrounding(unit, state.terrain);
   }
-  const attack: AttackGroundCommand = { type: 'attackGround', playerId: 1, entityIds: [1], targetPosition: { x: 45, y: 40 }, queue: false };
+  const attack: AttackGroundCommand = {
+    type: 'attackGround',
+    playerId: 1,
+    entityIds: [1],
+    targetPosition: { x: 45, y: 40 },
+    queue: false,
+  };
   return { config, state, attack };
 }
 
@@ -33,16 +39,30 @@ describe('installation command boundary and queues', () => {
     config.rts.installationsPerPlayer = 5;
     const state = createGameState(config, 12345);
     for (const unit of state.units.filter(isInstallation)) {
-      executeCommand(state, config, { type: 'setWeapon', playerId: unit.ownerPlayerId, entityIds: [unit.id], weaponId: 'basicCannon' });
+      executeCommand(state, config, {
+        type: 'setWeapon',
+        playerId: unit.ownerPlayerId,
+        entityIds: [unit.id],
+        weaponId: 'basicCannon',
+      });
       for (let shot = 0; shot < 5; shot++)
-        executeCommand(state, config, { type: 'fire', playerId: unit.ownerPlayerId, cannonId: unit.id });
+        executeCommand(state, config, {
+          type: 'fire',
+          playerId: unit.ownerPlayerId,
+          cannonId: unit.id,
+        });
     }
     expect(state.units).toHaveLength(10);
     expect(state.projectiles).toHaveLength(50);
     expect(new Set(state.projectiles.map((projectile) => projectile.id)).size).toBe(50);
     stepSimulation(state, config, 1 / 60);
     expect(state.shotsFired).toBe(50);
-    expect(state.projectiles.every((projectile) => Number.isFinite(projectile.position.x) && Number.isFinite(projectile.position.y))).toBe(true);
+    expect(
+      state.projectiles.every(
+        (projectile) =>
+          Number.isFinite(projectile.position.x) && Number.isFinite(projectile.position.y),
+      ),
+    ).toBe(true);
   });
 
   it('validates ownership, life, weapon capability and finite ground targets in simulation', () => {
@@ -52,8 +72,16 @@ describe('installation command boundary and queues', () => {
     executeCommand(state, config, { ...attack, targetPosition: { x: NaN, y: 1 } });
     expect(state.units.filter(isInstallation).every((unit) => unit.orders.length === 0)).toBe(true);
     state.cannon.availableWeaponIds = ['basicCannon'];
-    executeCommand(state, config, { type: 'setWeapon', playerId: 1, entityIds: [1, 2], weaponId: 'mortar' });
-    expect(state.units.filter(isInstallation).map((unit) => unit.weaponId)).toEqual(['basicCannon', 'basicCannon']);
+    executeCommand(state, config, {
+      type: 'setWeapon',
+      playerId: 1,
+      entityIds: [1, 2],
+      weaponId: 'mortar',
+    });
+    expect(state.units.filter(isInstallation).map((unit) => unit.weaponId)).toEqual([
+      'basicCannon',
+      'basicCannon',
+    ]);
     state.cannon.alive = false;
     executeCommand(state, config, attack);
     expect(state.cannon.orders).toEqual([]);
@@ -63,7 +91,10 @@ describe('installation command boundary and queues', () => {
     const { state, config, attack } = scene();
     executeCommand(state, config, attack);
     attack.targetPosition.x = 46;
-    expect(state.cannon.orders[0]).toEqual({ type: 'attackGround', targetPosition: { x: 45, y: 40 } });
+    expect(state.cannon.orders[0]).toEqual({
+      type: 'attackGround',
+      targetPosition: { x: 45, y: 40 },
+    });
     executeCommand(state, config, { ...attack, queue: true });
     expect(state.cannon.orders).toHaveLength(2);
     executeCommand(state, config, attack);
@@ -82,14 +113,28 @@ describe('installation command boundary and queues', () => {
   it('validates target IDs and advances past destroyed targets even during reload', () => {
     const { state, config, attack } = scene();
     for (const targetEntityId of [1, 999])
-      executeCommand(state, config, { type: 'attackTarget', playerId: 1, entityIds: [1], targetEntityId, queue: false });
+      executeCommand(state, config, {
+        type: 'attackTarget',
+        playerId: 1,
+        entityIds: [1],
+        targetEntityId,
+        queue: false,
+      });
     expect(state.cannon.orders).toEqual([]);
-    executeCommand(state, config, { type: 'attackTarget', playerId: 1, entityIds: [1], targetEntityId: 2, queue: false });
+    executeCommand(state, config, {
+      type: 'attackTarget',
+      playerId: 1,
+      entityIds: [1],
+      targetEntityId: 2,
+      queue: false,
+    });
     executeCommand(state, config, { ...attack, queue: true });
     state.cannon.nextFireTimeSeconds = 10;
     state.units[1]!.alive = false;
     stepSimulation(state, config, 1 / 60);
-    expect(state.cannon.orders).toEqual([{ type: 'attackGround', targetPosition: attack.targetPosition }]);
+    expect(state.cannon.orders).toEqual([
+      { type: 'attackGround', targetPosition: attack.targetPosition },
+    ]);
     expect(state.cannon.fireControl.lastFailure).toBe('targetLost');
     expect(state.shotsFired).toBe(0);
   });
@@ -114,7 +159,12 @@ describe('installation command boundary and queues', () => {
     expect(state.cannon.orders).toHaveLength(1);
     stepSimulation(state, config, 1 / 60);
     expect(state.shotsFired).toBe(1);
-    executeCommand(state, config, { type: 'setWeapon', playerId: 1, entityIds: [1], weaponId: 'basicCannon' });
+    executeCommand(state, config, {
+      type: 'setWeapon',
+      playerId: 1,
+      entityIds: [1],
+      weaponId: 'basicCannon',
+    });
     executeCommand(state, config, { type: 'fire', playerId: 1, cannonId: 1 });
     expect(state.shotsFired).toBe(1);
     expect(state.cannon.orders).toEqual([]);
@@ -146,7 +196,11 @@ describe('installation command boundary and queues', () => {
     state.units.push(second);
     state.nextEntityId = 4;
     stepSimulation(state, config, 1 / 60, [{ ...attack, entityIds: [3, 1, 3] }]);
-    expect(state.events.filter((event) => event.type === 'projectileSpawned').map((event) => event.projectile.ownerEntityId)).toEqual([1, 3]);
+    expect(
+      state.events
+        .filter((event) => event.type === 'projectileSpawned')
+        .map((event) => event.projectile.ownerEntityId),
+    ).toEqual([1, 3]);
     expect(state.projectiles).toHaveLength(2);
     const runtime = new GameRuntime(config);
     runtime.setPaused(true);
@@ -161,10 +215,13 @@ describe('installation command boundary and queues', () => {
 
   it('executes an AttackTarget order as a real hit through the existing damage pipeline', () => {
     const { state, config } = scene();
-    stepSimulation(state, config, 1 / 60, [{ type: 'attackTarget', playerId: 1, entityIds: [1], targetEntityId: 2, queue: false }]);
+    stepSimulation(state, config, 1 / 60, [
+      { type: 'attackTarget', playerId: 1, entityIds: [1], targetEntityId: 2, queue: false },
+    ]);
     expect(state.shotsFired).toBe(1);
     expect(state.cannon.orders).toEqual([]);
-    for (let tick = 0; tick < 1200 && state.projectiles.length; tick++) stepSimulation(state, config, 1 / 60);
+    for (let tick = 0; tick < 1200 && state.projectiles.length; tick++)
+      stepSimulation(state, config, 1 / 60);
     expect(state.lastEntityImpact?.targetEntityId).toBe(2);
     expect(state.units[1]!.health.current).toBeLessThan(100);
   });

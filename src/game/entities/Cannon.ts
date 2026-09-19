@@ -45,7 +45,11 @@ export function clampAimAngle(angleRad: number, config: GameConfig): number {
   const left = Math.abs(angleRad) > Math.PI / 2;
   // Preserve in-range right-facing angles bit-for-bit for existing physics fixtures.
   const elevation = left ? (angleRad >= 0 ? Math.PI - angleRad : -Math.PI - angleRad) : angleRad;
-  const limited = clamp(elevation, toRadians(config.cannon.minAngleDeg), toRadians(config.cannon.maxAngleDeg));
+  const limited = clamp(
+    elevation,
+    toRadians(config.cannon.minAngleDeg),
+    toRadians(config.cannon.maxAngleDeg),
+  );
   return left ? Math.PI - limited : limited;
 }
 

@@ -218,9 +218,9 @@ export interface WeaponDefinition {
 Например:
 
 ```ts
-muzzleOffset
-shotsPerFire
-spread
+muzzleOffset;
+shotsPerFire;
+spread;
 ```
 
 но не добавлять будущие параметры без реальной необходимости.
@@ -315,7 +315,7 @@ const projectileDefinitions = {
 Пример:
 
 ```ts
-export const weaponDefinitions: Record<WeaponId, WeaponDefinition>
+export const weaponDefinitions: Record<WeaponId, WeaponDefinition>;
 ```
 
 Если string ID создают слишком слабую типизацию, можно использовать string literal union.
@@ -339,13 +339,13 @@ Basic Cannon
 Например:
 
 ```ts
-basicCannon
+basicCannon;
 ```
 
 которое использует:
 
 ```ts
-basicShell
+basicShell;
 ```
 
 Значения должны соответствовать текущему `GameConfig`.
@@ -544,14 +544,14 @@ interface CannonState {
 Если позже cannon сможет иметь несколько weapons, текущая структура должна легко расширяться до:
 
 ```ts
-weaponIds
-activeWeaponId
+weaponIds;
+activeWeaponId;
 ```
 
 Но сейчас достаточно:
 
 ```ts
-weaponId
+weaponId;
 ```
 
 ---
@@ -788,9 +788,7 @@ GameEvent[]
 Если общий union получается удобным:
 
 ```ts
-type GameEvent =
-  | ImpactEvent
-  | TerrainDamageEvent;
+type GameEvent = ImpactEvent | TerrainDamageEvent;
 ```
 
 Не создавать глобальный pub/sub framework.
