@@ -15,6 +15,7 @@ import type { HealthChange } from '../combat/applyEntityDamage';
 import { spawnInstallations } from '../entities/spawnInstallations';
 import type { ExplosionEvent } from '../explosions/ExplosionEvent';
 import type { ExplosionResolvedEvent } from '../explosions/resolveExplosion';
+import type { FallingTerrainCluster, PendingTerrainSettling } from '../terrain/terrainSettling';
 
 export interface LastEntityImpact extends EntityImpactEvent, HealthChange {
   damage: number;
@@ -56,6 +57,8 @@ export interface GameState {
   lastEntityImpact: LastEntityImpact | null;
   projectiles: ProjectileState[];
   terrain: TerrainGrid;
+  pendingTerrainSettling: PendingTerrainSettling[];
+  fallingTerrain: FallingTerrainCluster[];
   lastImpact: LastImpact | null;
   events: SimulationEvent[];
   shotsFired: number;
@@ -75,6 +78,8 @@ export function createGameState(config: GameConfig, seed: number): GameState {
     lastEntityImpact: null,
     projectiles: [],
     terrain,
+    pendingTerrainSettling: [],
+    fallingTerrain: [],
     lastImpact: null,
     events: [],
     shotsFired: 0,

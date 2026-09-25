@@ -1,8 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { GlProgram, Texture } from 'pixi.js';
+import { describe, expect, it, vi } from 'vitest';
 import { TerrainGrid } from '../terrain/TerrainGrid';
 import { TerrainMaterialId } from '../terrain/TerrainMaterialId';
 import { TerrainLayer } from './TerrainLayer';
 import type { TerrainRasterRequest, TerrainRasterResult } from './terrainRasterProtocol';
+import { defaultTerrainTextureSettings } from './TerrainTextureSettings';
+import { terrainFieldHaloCells, terrainFieldSamplePaddingCells } from './terrainVisualField';
 
 class FakeWorker {
   onmessage: ((event: MessageEvent) => void) | null = null;
@@ -18,72 +21,95 @@ class FakeWorker {
     this.terminated = true;
   }
 
-  complete(request: TerrainRasterRequest, bitmap: ImageBitmap): void {
+  complete(request: TerrainRasterRequest): void {
     const result: TerrainRasterResult = {
-      type: 'chunkRasterized',
+      type: 'terrainFieldBuilt',
       requestId: request.requestId,
       generation: request.generation,
       terrainVersion: request.terrainVersion,
-      settingsRevision: request.settingsRevision,
       chunkColumn: request.chunkColumn,
       chunkRow: request.chunkRow,
-      localX: request.localX,
-      localY: request.localY,
-      width: request.width,
-      height: request.height,
-      bitmap,
-      scale: request.settings.enabled ? request.settings.quality : 1,
-      visualUpdateMs: 1,
+      chunkWidth: request.chunkWidth,
+      chunkHeight: request.chunkHeight,
+      fieldWidth: request.fieldWidth,
+      fieldHeight: request.fieldHeight,
+      field: new Uint8Array(request.fieldWidth * request.fieldHeight * 4).buffer,
+      fieldBuildMs: 1,
+      queuedAtMs: request.queuedAtMs,
+      retry: request.retry,
     };
     this.onmessage?.({ data: result } as MessageEvent<TerrainRasterResult>);
   }
 }
 
-function bitmap() {
-  let closed = false;
-  return {
-    value: { close: () => (closed = true) } as unknown as ImageBitmap,
-    isClosed: () => closed,
-  };
-}
-
 const settings = { enabled: true, quality: 4 } as const;
+const textureSettings = { ...defaultTerrainTextureSettings };
+const noTextureLoad = async () => Texture.WHITE;
 
-describe('TerrainLayer async raster queue', () => {
-  it('coalesces edits made while one request is in flight', () => {
+describe('TerrainLayer async field queue', () => {
+  it('rebuilds the complete chunk when edits arrive during an in-flight request', () => {
     const worker = new FakeWorker();
-    const layer = new TerrainLayer(() => worker as unknown as Worker);
-    const terrain = new TerrainGrid(3, 2, 1);
-    layer.update(terrain, settings);
+    const layer = new TerrainLayer(() => worker as unknown as Worker, noTextureLoad);
+    const terrain = new TerrainGrid(8, 8, 1);
+    layer.update(terrain, settings, textureSettings);
     expect(worker.requests).toHaveLength(1);
+    expect(worker.requests[0]).toMatchObject({
+      type: 'buildTerrainField',
+      chunkWidth: 8,
+      chunkHeight: 8,
+      fieldWidth: 8 + terrainFieldHaloCells * 2,
+      fieldHeight: 8 + terrainFieldHaloCells * 2,
+    });
 
     terrain.setMaterial(1, 1, TerrainMaterialId.Soil);
-    layer.update(terrain, settings);
+    terrain.setMaterial(6, 6, TerrainMaterialId.Rock);
+    layer.update(terrain, settings, textureSettings);
     expect(worker.requests).toHaveLength(1);
 
-    const firstBitmap = bitmap();
-    worker.complete(worker.requests[0]!, firstBitmap.value);
+    worker.complete(worker.requests[0]!);
     expect(worker.requests).toHaveLength(2);
-    expect(worker.requests[1]?.terrainVersion).toBe(terrain.version);
+    const current = worker.requests[1]!;
+    expect(current.terrainVersion).toBe(terrain.version);
+    const materials = new Uint8Array(current.materials);
+    const padding = terrainFieldHaloCells + terrainFieldSamplePaddingCells;
+    expect(materials[(1 + padding) * current.sampleWidth + 1 + padding]).toBe(
+      TerrainMaterialId.Soil,
+    );
+    expect(materials[(6 + padding) * current.sampleWidth + 6 + padding]).toBe(
+      TerrainMaterialId.Rock,
+    );
 
     layer.destroy();
-    expect(firstBitmap.isClosed()).toBe(true);
     expect(worker.terminated).toBe(true);
   });
 
-  it('discards results from a replaced terrain generation', () => {
+  it('discards results from a replaced terrain generation and schedules the replacement', () => {
     const worker = new FakeWorker();
-    const layer = new TerrainLayer(() => worker as unknown as Worker);
-    layer.update(new TerrainGrid(2, 2, 1), settings);
+    const layer = new TerrainLayer(() => worker as unknown as Worker, noTextureLoad);
+    layer.update(new TerrainGrid(2, 2, 1), settings, textureSettings);
     const obsolete = worker.requests[0]!;
-    layer.update(new TerrainGrid(2, 2, 1), settings);
+    layer.update(new TerrainGrid(2, 2, 1), settings, textureSettings);
 
-    const obsoleteBitmap = bitmap();
-    worker.complete(obsolete, obsoleteBitmap.value);
-    expect(obsoleteBitmap.isClosed()).toBe(true);
+    worker.complete(obsolete);
     expect(worker.requests).toHaveLength(2);
     expect(worker.requests[1]?.generation).toBeGreaterThan(obsolete.generation);
 
     layer.destroy();
+  });
+
+  it('changes visual settings without restarting field reconstruction', () => {
+    const program = vi.spyOn(GlProgram, 'from').mockReturnValue({} as GlProgram);
+    const worker = new FakeWorker();
+    const layer = new TerrainLayer(() => worker as unknown as Worker, noTextureLoad);
+    const terrain = new TerrainGrid(2, 2, 1);
+    layer.update(terrain, settings, textureSettings);
+    worker.complete(worker.requests[0]!);
+    const mesh = layer.getVisualChunks()[0]?.mesh;
+    expect(mesh).toBeDefined();
+    layer.update(terrain, { enabled: false, quality: 1 }, { orientation: 'random' });
+    expect(worker.requests).toHaveLength(1);
+    expect(layer.getVisualChunks()[0]?.mesh).toBe(mesh);
+    layer.destroy();
+    program.mockRestore();
   });
 });

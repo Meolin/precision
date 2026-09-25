@@ -93,6 +93,7 @@ describe('swept collisions', () => {
 describe('seeded generation', () => {
   it('creates identical terrain for seed 12345', () => {
     const config = cloneConfig();
+    config.terrain.cellSizeMeters = 0.2;
     expect(generateTerrain(config, 12345).cells).toEqual(generateTerrain(config, 12345).cells);
   });
 

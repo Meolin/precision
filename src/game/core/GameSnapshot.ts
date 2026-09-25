@@ -42,7 +42,19 @@ export function createGameSnapshot(state: Readonly<GameState>) {
       cellSizeMeters: state.terrain.cellSizeMeters,
       version: state.terrain.version,
       cells: Array.from(state.terrain.cells),
+      ...(state.terrain.initialSurfaceMeters
+        ? { initialSurfaceMeters: [...state.terrain.initialSurfaceMeters] }
+        : {}),
     },
+    pendingTerrainSettling: state.pendingTerrainSettling.map((pending) => ({
+      rect: { ...pending.rect },
+      readyAtSeconds: pending.readyAtSeconds,
+    })),
+    fallingTerrain: state.fallingTerrain.map((cluster) => ({
+      cells: cluster.cells.map((cell) => ({ ...cell })),
+      elapsedSeconds: cluster.elapsedSeconds,
+      durationSeconds: cluster.durationSeconds,
+    })),
     shotsFired: state.shotsFired,
     lastImpact: state.lastImpact
       ? {

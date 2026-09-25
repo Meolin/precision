@@ -13,8 +13,12 @@ import { ScenePostProcessing } from './ScenePostProcessing';
 import type { ShaderSettings } from './ShaderSettings';
 import { MinimapRenderer } from './MinimapRenderer';
 import type { TerrainSmoothingSettings } from './TerrainSmoothingSettings';
+import type { TerrainTextureSettings } from './TerrainTextureSettings';
 import { BuildingAnimationPlayer } from '../buildings/BuildingAnimationPlayer';
 import type { BuildingAnimationPreview } from '../buildings/BuildingAnimationPreview';
+import type { FallingTerrainCluster } from '../terrain/terrainSettling';
+import { TerrainMaterialId } from '../terrain/TerrainMaterialId';
+import { terrainMaterialVisuals } from './terrainMaterialVisuals';
 
 // The source image is a 1448 × 1086 PNG. Its visible chassis ends at roughly
 // 78% of the image height, so this anchor places the tracks on the terrain.
@@ -41,6 +45,7 @@ export class SceneRenderer {
   private postProcessing: ScenePostProcessing;
   private background = new Graphics();
   private terrain = new TerrainLayer();
+  private fallingTerrain = new Graphics();
   private minimap = new MinimapRenderer();
   private trajectory = new Graphics();
   private cannonBases = new Container();
@@ -64,6 +69,7 @@ export class SceneRenderer {
   private buildingConfigIdentity: BuildingAnimationPreview['config'] | null = null;
   private buildingSourceRevision = -1;
   private staticKey = '';
+  private terrainIdentity: object | null = null;
   private previewKey: object | null = null;
   private previewVisible = false;
   private cannonStateIdentity: object | null = null;
@@ -79,7 +85,13 @@ export class SceneRenderer {
     this.frame.addChild(this.world, this.screenOverlay);
     parent.addChild(this.frame, this.frameMask, this.minimap.container);
     this.frame.mask = this.frameMask;
-    this.content.addChild(this.background, this.terrain.container, this.cannonBases, this.cannon);
+    this.content.addChild(
+      this.background,
+      this.terrain.container,
+      this.fallingTerrain,
+      this.cannonBases,
+      this.cannon,
+    );
     this.postProcessing = new ScenePostProcessing({
       content: this.content,
       background: this.background,
@@ -106,6 +118,7 @@ export class SceneRenderer {
     options: DebugOptions,
     shaders: ShaderSettings,
     terrainSmoothing: TerrainSmoothingSettings,
+    terrainTexture: TerrainTextureSettings,
     buildingPreview: BuildingAnimationPreview | undefined,
     width: number,
     height: number,
@@ -126,8 +139,16 @@ export class SceneRenderer {
     }
     this.world.position.set(viewport.offsetX, viewport.offsetY);
     this.world.scale.set(ppm);
-    this.terrain.update(state.terrain, terrainSmoothing);
+    if (state.terrain !== this.terrainIdentity) this.minimap.clearTerrain();
+    this.terrain.update(state.terrain, terrainSmoothing, terrainTexture, ppm);
+    this.drawFallingTerrain(
+      state.fallingTerrain,
+      state.terrain.cellSizeMeters,
+      runtime.isPaused() ? 0 : runtime.interpolationAlpha / config.simulation.tickRate,
+    );
+    this.terrainIdentity = state.terrain;
     this.terrain.container.visible = options.terrainVisual;
+    this.fallingTerrain.visible = options.terrainVisual;
     this.minimap.draw(runtime, controls, this.terrain, width, height);
     this.damagePopups.update(runtime.getDamagePopups(), runtime.presentationTimeSeconds, pixel);
     this.drawBuildingPreview(
@@ -358,7 +379,7 @@ export class SceneRenderer {
     this.terrainMetrics.visible = showTerrainMetrics;
     if (showTerrainMetrics) {
       const change = state.terrain.lastChange;
-      this.terrainMetrics.text = `terrain q=${state.terrain.collisionQueryCount} · changed=${change.modifiedPixels} px · chunks=${change.affectedChunks.length} · visual=${this.terrain.metrics.visualUpdateMs.toFixed(2)} ms`;
+      this.terrainMetrics.text = `terrain q=${state.terrain.collisionQueryCount} · changed=${change.modifiedPixels} px · chunks=${change.affectedChunks.length} · prep=${this.terrain.metrics.prepareUpdateMs.toFixed(2)} ms · worker=${this.terrain.metrics.workerUpdateMs.toFixed(2)} ms · publish=${this.terrain.metrics.publishUpdateMs.toFixed(2)} ms · round-trip=${this.terrain.metrics.workerRoundTripMs.toFixed(1)} ms · rendered=${this.terrain.metrics.visualLatencyMs.toFixed(1)} ms`;
       this.terrainMetrics.scale.set(pixel);
       this.terrainMetrics.position.set(viewport.worldX + 8 * pixel, viewport.worldY + 8 * pixel);
     }
@@ -583,6 +604,43 @@ export class SceneRenderer {
     this.buildingPlayer.setProgress(preview.progress);
     this.buildingPlayer.setOnionSkin(preview.onionSkinStageIndex);
     this.buildingPlayer.setHitboxVisible(preview.showHitbox);
+  }
+
+  private drawFallingTerrain(
+    clusters: readonly FallingTerrainCluster[],
+    cellSize: number,
+    interpolationSeconds: number,
+  ): void {
+    this.fallingTerrain.clear();
+    for (const material of [TerrainMaterialId.Soil, TerrainMaterialId.Rock] as const) {
+      let drawn = false;
+      for (const cluster of clusters) {
+        const progress = Math.min(
+          1,
+          (cluster.elapsedSeconds + interpolationSeconds) / cluster.durationSeconds,
+        );
+        const horizontal = progress * progress * (3 - 2 * progress);
+        const vertical = progress * progress;
+        for (const cell of cluster.cells) {
+          if (cell.material !== material) continue;
+          this.fallingTerrain.rect(
+            (cell.fromColumn + (cell.toColumn - cell.fromColumn) * horizontal) * cellSize,
+            (cell.fromRow + (cell.toRow - cell.fromRow) * vertical) * cellSize,
+            cellSize,
+            cellSize,
+          );
+          drawn = true;
+        }
+      }
+      if (drawn) {
+        const [red, green, blue] = terrainMaterialVisuals[material].surface;
+        this.fallingTerrain.fill((red << 16) | (green << 8) | blue);
+      }
+    }
+  }
+
+  markRendered(): void {
+    this.terrain.markRendered();
   }
 
   destroy(): void {

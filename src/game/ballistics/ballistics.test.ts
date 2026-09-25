@@ -113,6 +113,7 @@ describe('projectile physics', () => {
 describe('trajectory preview', () => {
   it('predicts the live contact point and does not damage terrain', () => {
     const config = cloneConfig();
+    config.terrain.cellSizeMeters = 0.2;
     const state = createGameState(config, 12345);
     const before = state.terrain.cells.slice();
     const preview = simulateTrajectoryPreview(state.cannon, state.terrain, config);

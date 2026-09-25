@@ -1,41 +1,40 @@
-import type { TerrainSmoothingSettings } from './TerrainSmoothingSettings';
-
 export interface TerrainRasterRequest {
-  type: 'rasterizeChunk';
+  type: 'buildTerrainField';
   requestId: number;
   generation: number;
   terrainVersion: number;
-  settingsRevision: number;
   chunkColumn: number;
   chunkRow: number;
-  /** Inclusive chunk-local target origin and dimensions. */
-  localX: number;
-  localY: number;
-  width: number;
-  height: number;
-  /** Material samples include padding around the target. */
+  chunkWidth: number;
+  chunkHeight: number;
+  fieldWidth: number;
+  fieldHeight: number;
+  /** Material samples include the field halo plus reconstruction dependency padding. */
   sampleWidth: number;
   sampleHeight: number;
   samplePadding: number;
   materials: ArrayBuffer;
-  settings: TerrainSmoothingSettings;
+  /** Fractional surface rows relative to the sample origin, one value per sample column. */
+  surfaceRows?: ArrayBuffer;
+  queuedAtMs: number;
+  retry: number;
 }
 
 export interface TerrainRasterResult {
-  type: 'chunkRasterized';
+  type: 'terrainFieldBuilt';
   requestId: number;
   generation: number;
   terrainVersion: number;
-  settingsRevision: number;
   chunkColumn: number;
   chunkRow: number;
-  localX: number;
-  localY: number;
-  width: number;
-  height: number;
-  bitmap: ImageBitmap;
-  scale: number;
-  visualUpdateMs: number;
+  chunkWidth: number;
+  chunkHeight: number;
+  fieldWidth: number;
+  fieldHeight: number;
+  field: ArrayBuffer;
+  fieldBuildMs: number;
+  queuedAtMs: number;
+  retry: number;
 }
 
 export interface TerrainRasterFailure {
@@ -43,10 +42,11 @@ export interface TerrainRasterFailure {
   requestId: number;
   generation: number;
   terrainVersion: number;
-  settingsRevision: number;
   chunkColumn: number;
   chunkRow: number;
   message: string;
+  queuedAtMs: number;
+  retry: number;
 }
 
 export type TerrainRasterResponse = TerrainRasterResult | TerrainRasterFailure;

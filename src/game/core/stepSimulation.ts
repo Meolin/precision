@@ -20,6 +20,11 @@ import { isInstallation } from '../entities/InstallationState';
 import { refreshUnitGrounding } from '../movement/terrainGrounding';
 import { createExplosionEvent, type ExplosionEvent } from '../explosions/ExplosionEvent';
 import { resolveExplosion } from '../explosions/resolveExplosion';
+import {
+  advanceTerrainFall,
+  queueTerrainSettling,
+  startTerrainFall,
+} from '../terrain/terrainSettling';
 
 export function stepSimulation(
   state: GameState,
@@ -29,6 +34,7 @@ export function stepSimulation(
   samples?: Vec2[],
 ): void {
   state.events = [];
+  const terrainVersionAtStart = state.terrain.version;
   // Support correction precedes aiming and firing; installations never move horizontally.
   for (const unit of state.units) refreshUnitGrounding(unit, state.terrain);
   for (const command of commands) executeCommand(state, config, command);
@@ -226,6 +232,22 @@ export function stepSimulation(
     };
   }
   state.projectiles = state.projectiles.filter((projectile) => projectile.alive);
+  const nextElapsedSeconds = state.elapsedSeconds + dt;
+  for (const change of state.terrain.getChangesSince(terrainVersionAtStart))
+    if (change.dirtyRect)
+      queueTerrainSettling(state.pendingTerrainSettling, change.dirtyRect, nextElapsedSeconds);
+  advanceTerrainFall(state.terrain, state.fallingTerrain, dt);
+  for (let index = 0; index < state.pendingTerrainSettling.length;) {
+    const pending = state.pendingTerrainSettling[index]!;
+    if (pending.readyAtSeconds > nextElapsedSeconds) {
+      index++;
+      continue;
+    }
+    state.fallingTerrain.push(
+      ...startTerrainFall(state.terrain, pending.rect, state.fallingTerrain),
+    );
+    state.pendingTerrainSettling.splice(index, 1);
+  }
   // Craters/channels from this tick also ground stationary targets immediately.
   for (const unit of state.units) refreshUnitGrounding(unit, state.terrain);
   for (const installation of state.units.filter(isInstallation)) {

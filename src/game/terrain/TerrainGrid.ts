@@ -17,6 +17,12 @@ interface PendingChunkChange {
   dirtyRect: TerrainRect;
 }
 
+export interface TerrainMaterialChange {
+  readonly column: number;
+  readonly row: number;
+  readonly material: TerrainMaterialId;
+}
+
 /**
  * Authoritative terrain storage. Materials remain a compact byte map while all occupancy queries
  * use independently updateable packed chunk masks. Coordinates are cells unless named otherwise.
@@ -30,6 +36,8 @@ export class TerrainGrid {
   lastChange: TerrainChangeResult;
   collisionQueryCount = 0;
   totalModifiedPixels = 0;
+  /** Immutable generation profile for subcell rendering; collision always uses cells. */
+  readonly initialSurfaceMeters: readonly number[] | undefined;
 
   private readonly mutableChunks: TerrainChunk[];
   private readonly changeHistory: TerrainChangeResult[] = [];
@@ -40,6 +48,7 @@ export class TerrainGrid {
     readonly cellSizeMeters: number,
     cells?: Uint8Array,
     readonly chunkSizeCells = defaultTerrainChunkSizeCells,
+    initialSurfaceMeters?: readonly number[],
   ) {
     if (
       !Number.isInteger(columns) ||
@@ -53,6 +62,15 @@ export class TerrainGrid {
     )
       throw new Error('Invalid terrain dimensions.');
     if (cells && cells.length !== columns * rows) throw new Error('Terrain data size mismatch.');
+    if (
+      initialSurfaceMeters &&
+      (initialSurfaceMeters.length !== columns ||
+        initialSurfaceMeters.some((height) => !Number.isFinite(height)))
+    )
+      throw new Error('Invalid initial terrain surface.');
+    this.initialSurfaceMeters = initialSurfaceMeters
+      ? Object.freeze([...initialSurfaceMeters])
+      : undefined;
     this.cells = cells ? cells.slice() : new Uint8Array(columns * rows);
     this.chunkColumns = Math.ceil(columns / chunkSizeCells);
     this.chunkRows = Math.ceil(rows / chunkSizeCells);
@@ -129,6 +147,40 @@ export class TerrainGrid {
       { minX: column, minY: row, maxX: column, maxY: row },
       1,
     );
+  }
+
+  /** Publish a terrain operation as one version and one dirty region. */
+  applyMaterialChanges(changes: readonly TerrainMaterialChange[]): TerrainChangeResult {
+    const finalMaterials = new Map<number, TerrainMaterialId>();
+    for (const { column, row, material } of changes)
+      if (this.isInBounds(column, row)) finalMaterials.set(row * this.columns + column, material);
+    const pending = new Map<number, PendingChunkChange>();
+    let dirtyRect: TerrainRect | undefined;
+    let modified = 0;
+    for (const [index, material] of finalMaterials) {
+      if (this.cells[index] === material) continue;
+      const column = index % this.columns;
+      const row = Math.floor(index / this.columns);
+      this.cells[index] = material;
+      const chunk = this.chunkAtCell(column, row)!;
+      const localX = column - chunk.originX;
+      const localY = row - chunk.originY;
+      this.writeCollisionBit(chunk, localX, localY, material !== TerrainMaterialId.Air);
+      this.addPendingChange(pending, chunk, {
+        minX: localX,
+        minY: localY,
+        maxX: localX,
+        maxY: localY,
+      });
+      dirtyRect = unionTerrainRect(dirtyRect, {
+        minX: column,
+        minY: row,
+        maxX: column,
+        maxY: row,
+      });
+      modified++;
+    }
+    return this.publishChange(pending, dirtyRect, modified);
   }
 
   worldToCell(position: Vec2): Vec2 {

@@ -38,6 +38,7 @@ export function useGameInput(
   onPause: () => void,
   onReset: () => void,
   onToggleTerrainDebug: (key: 'collisionMask' | 'terrainChunks' | 'terrainDirtyRects') => void,
+  allowFireHotkey = true,
 ): void {
   useEffect(() => {
     const element = surface.current;
@@ -378,6 +379,7 @@ export function useGameInput(
           controls.cancelTargeting();
           break;
         case 'Space':
+          if (!allowFireHotkey) break;
           event.preventDefault();
           if (!event.repeat) controls.manualFire();
           break;
@@ -477,5 +479,5 @@ export function useGameInput(
       window.removeEventListener('keydown', keydown);
       window.removeEventListener('keyup', keyup);
     };
-  }, [surface, runtime, controls, onPause, onReset, onToggleTerrainDebug]);
+  }, [surface, runtime, controls, onPause, onReset, onToggleTerrainDebug, allowFireHotkey]);
 }

@@ -51,7 +51,7 @@ export interface GameConfig {
   preview: { maxSeconds: number; maxPoints: number };
 }
 
-export type EditableSection = 'simulation' | 'physics' | 'movement' | 'damagePopup';
+export type EditableSection = 'simulation' | 'physics' | 'movement' | 'damagePopup' | 'terrain';
 type NumericEditableSection = EditableSection;
 interface SettingDefinition<Section extends NumericEditableSection> {
   section: Section;
@@ -69,6 +69,22 @@ export type NumericSetting = {
 
 // One registry drives both the numeric UI and runtime validation.
 export const numericSettings: readonly NumericSetting[] = [
+  {
+    section: 'terrain',
+    key: 'cellSizeMeters',
+    label: 'Размер ячейки',
+    unit: 'м',
+    min: 0.025,
+    max: 0.4,
+    step: 0.025,
+    options: [
+      { value: 0.025, label: '0,025 м · 8×' },
+      { value: 0.05, label: '0,05 м · 4×' },
+      { value: 0.1, label: '0,1 м · 2×' },
+      { value: 0.2, label: '0,2 м · 1×' },
+      { value: 0.4, label: '0,4 м · ½×' },
+    ],
+  },
   {
     section: 'damagePopup',
     key: 'initialSpeedMultiplier',

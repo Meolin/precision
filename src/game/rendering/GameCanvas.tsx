@@ -8,6 +8,7 @@ import { GameScene } from './GameScene';
 import type { RtsController } from '../client/RtsController';
 import type { ShaderSettings } from './ShaderSettings';
 import type { TerrainSmoothingSettings } from './TerrainSmoothingSettings';
+import type { TerrainTextureSettings } from './TerrainTextureSettings';
 import type { BuildingAnimationPreview } from '../buildings/BuildingAnimationPreview';
 
 interface Props {
@@ -16,10 +17,12 @@ interface Props {
   debug: DebugOptions;
   shaders: ShaderSettings;
   terrainSmoothing: TerrainSmoothingSettings;
+  terrainTexture: TerrainTextureSettings;
   onToggleTerrainDebug: (key: 'collisionMask' | 'terrainChunks' | 'terrainDirtyRects') => void;
   onPause: () => void;
   onReset: () => void;
   buildingPreview?: BuildingAnimationPreview;
+  allowFireHotkey?: boolean;
 }
 
 export function GameCanvas({
@@ -28,10 +31,12 @@ export function GameCanvas({
   debug,
   shaders,
   terrainSmoothing,
+  terrainTexture,
   onToggleTerrainDebug,
   onPause,
   onReset,
   buildingPreview,
+  allowFireHotkey = true,
 }: Props) {
   const surface = useRef<HTMLDivElement>(null);
   const application = useRef<ApplicationRef>(null);
@@ -41,7 +46,7 @@ export function GameCanvas({
     if (element)
       app.renderer.resize(Math.max(1, element.clientWidth), Math.max(1, element.clientHeight));
   }, []);
-  useGameInput(surface, runtime, controls, onPause, onReset, onToggleTerrainDebug);
+  useGameInput(surface, runtime, controls, onPause, onReset, onToggleTerrainDebug, allowFireHotkey);
   useEffect(() => {
     if (!surface.current) return;
     const observer = new ResizeObserver(() => {
@@ -97,6 +102,7 @@ export function GameCanvas({
           debug={debug}
           shaders={shaders}
           terrainSmoothing={terrainSmoothing}
+          terrainTexture={terrainTexture}
           buildingPreview={buildingPreview}
         />
       </Application>

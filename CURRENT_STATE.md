@@ -9,14 +9,26 @@ _Срез подготовлен по исходникам, README и отчёт
 - Fixed-timestep баллистика: гравитация, ветер, drag, траекторный preview и численный ballistic aim solver.
 - Три оружейных/снарядных профиля, weapon overrides и техническая панель.
 - Destructible terrain: seeded material map, авторитетная chunked `Uint32Array` collision mask, swept projectile collision, локальные кратеры и capsule-каналы пробития.
+- Начальная поверхность — непрерывный профиль с плавным шумом в мировых координатах; сетка
+  выбирает материал по центрам клеток. Плотность сетки не меняет профиль шума.
+- Renderer получает сохранённые дробные высоты начальной поверхности; внешняя граница
+  не восстанавливается из лестницы occupancy. Изменения клеток вычитаются/добавляются к профилю.
 - Углы контакта, нормали, детерминированный рикошет и безопасное продолжение полёта.
 - Установки с ownership, круговыми hitbox, здоровьем, прямым уроном, смертью и damage popups.
 - Взрывы: AoE falloff, terrain occlusion и один crater pipeline.
+- Тонкие следы и перемычки после повреждения начинают падать через 50 мс симуляционного
+  времени; анимация занимает 240 мс, затем материал собирается в насыпь на опоре снизу.
 - RTS-слой: single/shift/box selection, hover, control groups, AttackGround/AttackTarget/Stop, очереди приказов и групповой огонь.
-- Pixi-рендеринг с независимыми terrain chunk textures и mask-derived сглаживанием, камера/миникарта, debug overlays и post-processing.
+- Pixi-рендеринг с независимыми terrain chunk meshes, worker-built SDF/material fields,
+  билинейным восстановлением контура и локальной защитой тонких стенок/каналов,
+  world-space текстурами, экранным сглаживанием 1×1/2×2/4×4/8×8/16×16 выборками покрытия,
+  камерой/миникартой, debug overlays и post-processing.
 - Встроенный Animation Sandbox: multi-PNG stages, alignment/milestones, crossfade/reveal/dissolve,
-  групповое редактирование кадров, progress scrub/play, onion skin, edge-only blend modes,
-  тест в реальной Pixi-сцене и production JSON schema v2.
+  групповое редактирование кадров, послойный таймлайн с секундомерами свойств, ключами,
+  интерполяцией, рабочей областью, прямоугольным выделением ключей, управляемыми Bézier-кривыми,
+  перемещением/подрезкой блоков и порядком слоёв,
+  progress scrub/play, onion skin, edge-only blend modes, тест в реальной Pixi-сцене и
+  production JSON schema v5 (с импортом v2/v3/v4).
 
 ## Проверки
 
@@ -37,7 +49,7 @@ npm run format:check
 - Установки стационарны: нет движения, pathfinding, unit collision avoidance или перехвата движущихся целей.
 - Нет multiplayer/network protocol, replay, AI, экономики, gameplay-системы строительства или ECS.
   Animation Sandbox добавляет только presentation/runtime player и временное тестовое здание вне `GameState`.
-- Terrain не осыпается; точность ограничена ячейкой 0.2 m. Взрывная волна мгновенна, без delayed detonators, fragmentation, armor и status effects.
+- Terrain не осыпается; размер ячейки по умолчанию 0.1 m, в правой панели доступны 0.025, 0.05, 0.2 и 0.4 m. Взрывная волна мгновенна, без delayed detonators, fragmentation, armor и status effects.
 - Solver синхронный, ограниченный и без кэша; производительность массовых залпов не измерялась.
 - Preview показывает не более одного рикошета; остаток fixed tick после контакта не доинтегрируется.
 - Некоторые расширенные тесты созданы для Step 6/7, но их прохождение не заявлено историческими отчётами.

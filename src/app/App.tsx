@@ -18,6 +18,7 @@ import { RtsController } from '../game/client/RtsController';
 import { SelectionPanel } from '../ui/SelectionPanel/SelectionPanel';
 import { createShaderSettings } from '../game/rendering/ShaderSettings';
 import { defaultTerrainSmoothingSettings } from '../game/rendering/TerrainSmoothingSettings';
+import { defaultTerrainTextureSettings } from '../game/rendering/TerrainTextureSettings';
 import { AnimationSandbox } from '../ui/AnimationSandbox/AnimationSandbox';
 import { createDefaultBuildingAnimationConfig } from '../game/buildings/BuildingAnimationConfig';
 import type { BuildingAnimationPreview } from '../game/buildings/BuildingAnimationPreview';
@@ -31,6 +32,9 @@ export function App({ runtime }: { runtime: GameRuntime }) {
   const [shaders, setShaders] = useState(createShaderSettings);
   const [terrainSmoothing, setTerrainSmoothing] = useState(() => ({
     ...defaultTerrainSmoothingSettings,
+  }));
+  const [terrainTexture, setTerrainTexture] = useState(() => ({
+    ...defaultTerrainTextureSettings,
   }));
   const [buildingPreview, setBuildingPreview] = useState<BuildingAnimationPreview>(() => ({
     config: createDefaultBuildingAnimationConfig(),
@@ -144,6 +148,7 @@ export function App({ runtime }: { runtime: GameRuntime }) {
               <GameCanvas
                 shaders={shaders}
                 terrainSmoothing={terrainSmoothing}
+                terrainTexture={terrainTexture}
                 runtime={runtime}
                 controls={controls}
                 debug={debug}
@@ -242,6 +247,8 @@ export function App({ runtime }: { runtime: GameRuntime }) {
             onShaders={setShaders}
             terrainSmoothing={terrainSmoothing}
             onTerrainSmoothing={setTerrainSmoothing}
+            terrainTexture={terrainTexture}
+            onTerrainTexture={setTerrainTexture}
             runtime={runtime}
             controls={controls}
             config={config}
@@ -268,6 +275,7 @@ export function App({ runtime }: { runtime: GameRuntime }) {
               setConfig(runtime.resetSettings());
               setShaders(createShaderSettings());
               setTerrainSmoothing({ ...defaultTerrainSmoothingSettings });
+              setTerrainTexture({ ...defaultTerrainTextureSettings });
               controls.camera.setZoom(1);
             }}
           />
@@ -279,6 +287,7 @@ export function App({ runtime }: { runtime: GameRuntime }) {
           debug={debug}
           shaders={shaders}
           terrainSmoothing={terrainSmoothing}
+          terrainTexture={terrainTexture}
           preview={buildingPreview}
           onPreview={setBuildingPreview}
           onOpenGame={() => setActiveView('game')}

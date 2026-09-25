@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { cloneConfig } from '../config/defaultGameConfig';
+import { cloneConfig, defaultGameConfig, withSetting } from '../config/defaultGameConfig';
+import { numericSettings } from '../config/GameConfig';
 import { toRadians } from '../math/Vec2';
 import { resolveWeapon } from '../weapons/WeaponSettings';
 import { GameRuntime } from './GameRuntime';
@@ -29,6 +30,28 @@ describe('fixed simulation clock', () => {
 });
 
 describe('game runtime', () => {
+  it('uses the denser default map grid and rebuilds it when the cell size changes', () => {
+    const runtime = new GameRuntime();
+    const initial = runtime.getState();
+    expect(initial.terrain.cellSizeMeters).toBe(0.1);
+    expect(initial.terrain.columns).toBe(3600);
+    expect(initial.terrain.rows).toBe(640);
+    const setting = numericSettings.find(
+      (item) => item.section === 'terrain' && item.key === 'cellSizeMeters',
+    );
+    expect(setting).toBeDefined();
+    const updated = runtime.updateConfig(withSetting(runtime.getConfig(), setting!, 0.2));
+    expect(updated.terrain.cellSizeMeters).toBe(0.2);
+    expect(runtime.getState().terrain.columns).toBe(1800);
+    expect(runtime.getState().terrain.rows).toBe(320);
+    expect(runtime.getState().seed).toBe(initial.seed);
+    runtime.resetSettings();
+    expect(runtime.getConfig().terrain.cellSizeMeters).toBe(
+      defaultGameConfig.terrain.cellSizeMeters,
+    );
+    expect(runtime.getState().terrain.columns).toBe(3600);
+  });
+
   it('queues serializable commands and applies aim before fire', () => {
     const runtime = new GameRuntime();
     runtime.enqueueCommand({ type: 'setAim', cannonId: 1, angleRad: toRadians(50) });

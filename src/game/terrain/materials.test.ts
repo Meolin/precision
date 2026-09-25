@@ -43,8 +43,9 @@ describe('material storage', () => {
     expect(new TerrainGrid(1, 1, 1)).not.toHaveProperty('penetrationResistance');
   });
 
-  it('generates deterministic materials and preserves the legacy surface exactly', () => {
+  it('generates deterministic materials without changing the surface when Rock is disabled', () => {
     const config = cloneConfig();
+    config.terrain.cellSizeMeters = 0.2;
     const layered = generateTerrain(config, 12345);
     expect(layered.cells).toEqual(generateTerrain(config, 12345).cells);
     expect(layered.cells).not.toEqual(generateTerrain(config, 12346).cells);

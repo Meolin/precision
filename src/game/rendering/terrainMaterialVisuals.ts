@@ -9,6 +9,13 @@ export interface TerrainMaterialVisual {
   readonly body: TerrainVisualColor;
   readonly edge: TerrainVisualColor;
   readonly surface: TerrainVisualColor;
+  readonly texture?: {
+    readonly assetUrl: string;
+    readonly tileWidthMeters: number;
+    readonly opacity: number;
+    readonly mipmaps: boolean;
+    readonly anisotropy: number;
+  };
 }
 
 /** Renderer-only registry: detailed procedural or textured variants can extend this contract. */
@@ -16,7 +23,18 @@ export const terrainMaterialVisuals: Readonly<
   Record<SolidTerrainMaterialId, TerrainMaterialVisual>
 > = {
   [TerrainMaterialId.Soil]: { body: [61, 53, 42], edge: [133, 147, 113], surface: [79, 76, 57] },
-  [TerrainMaterialId.Rock]: { body: [52, 60, 68], edge: [125, 138, 147], surface: [72, 82, 91] },
+  [TerrainMaterialId.Rock]: {
+    body: [52, 60, 68],
+    edge: [125, 138, 147],
+    surface: [72, 82, 91],
+    texture: {
+      assetUrl: '/Textures/Environment/Stone_example.png',
+      tileWidthMeters: 19.2,
+      opacity: 0.82,
+      mipmaps: true,
+      anisotropy: 4,
+    },
+  },
 };
 
 function visualColorAtCell(

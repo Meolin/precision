@@ -1,8 +1,17 @@
-import { Container, Sprite, Texture } from 'pixi.js';
+import { Assets, BufferImageSource, Container, Texture } from 'pixi.js';
 import type { TerrainRect } from '../terrain/TerrainChunk';
 import { unionTerrainRect } from '../terrain/TerrainChunk';
 import type { TerrainGrid } from '../terrain/TerrainGrid';
-import { terrainSmoothingKey, type TerrainSmoothingSettings } from './TerrainSmoothingSettings';
+import { TerrainChunkMesh } from './TerrainChunkMesh';
+import type { TerrainSmoothingSettings } from './TerrainSmoothingSettings';
+import type { TerrainTextureSettings } from './TerrainTextureSettings';
+import { terrainMaterialVisuals } from './terrainMaterialVisuals';
+import { TerrainMaterialId } from '../terrain/TerrainMaterialId';
+import {
+  terrainFieldHaloCells,
+  terrainFieldSamplePaddingCells,
+  terrainVisualInvalidationPaddingCells,
+} from './terrainVisualField';
 import type {
   TerrainRasterRequest,
   TerrainRasterResponse,
@@ -13,98 +22,155 @@ interface PendingRegion {
   chunkColumn: number;
   chunkRow: number;
   rect: TerrainRect;
+  retry: number;
+  queuedAtMs: number;
+}
+
+interface InFlightRequest {
+  key: string;
+  region: PendingRegion;
+  request: TerrainRasterRequest;
 }
 
 export interface TerrainVisualChunk {
   readonly chunkColumn: number;
   readonly chunkRow: number;
-  readonly sprite: Sprite;
-  readonly texture: Texture;
+  readonly mesh: TerrainChunkMesh;
+  readonly fieldTexture: Texture;
+  rockTexture: Texture;
 }
 
 export interface TerrainVisualMetrics {
-  visualUpdateMs: number;
+  /** Main-thread material-buffer preparation before transferring the worker request. */
+  prepareUpdateMs: number;
+  /** Worker-only reconstruction cost. */
+  workerUpdateMs: number;
+  /** Main-thread field publication and resource creation cost. */
+  publishUpdateMs: number;
+  /** Queue-to-worker-response latency, before publication. */
+  workerRoundTripMs: number;
+  /** Queue-to-first-render latency for a published terrain field. */
+  visualLatencyMs: number;
   updatedChunkCount: number;
   updatedPixelCount: number;
 }
 
-const samplePadding = 4;
+const rockVisual =
+  terrainMaterialVisuals[TerrainMaterialId.Rock].texture ??
+  (() => {
+    throw new Error('Rock material texture metadata is missing.');
+  })();
+const maxWorkerRetries = 2;
 
 /** Chunked GPU adapter. It reads dirty history but never mutates simulation terrain. */
 export class TerrainLayer {
   readonly container = new Container();
   readonly metrics: TerrainVisualMetrics = {
-    visualUpdateMs: 0,
+    prepareUpdateMs: 0,
+    workerUpdateMs: 0,
+    publishUpdateMs: 0,
+    workerRoundTripMs: 0,
+    visualLatencyMs: 0,
     updatedChunkCount: 0,
     updatedPixelCount: 0,
   };
 
   private readonly worker: Worker;
   private readonly pending = new Map<string, PendingRegion>();
-  private readonly visuals = new Map<string, TerrainVisualChunk & { canvas: HTMLCanvasElement }>();
+  private readonly visuals = new Map<string, TerrainVisualChunk>();
   private terrain: TerrainGrid | null = null;
   private generation = 0;
-  private settingsKey = '';
-  private settingsRevision = 0;
   private settings: TerrainSmoothingSettings | null = null;
+  private textureSettings: TerrainTextureSettings | null = null;
+  private rockTexture = Texture.WHITE;
   private lastScheduledVersion = -1;
-  private busy = false;
+  private inFlight: InFlightRequest | null = null;
+  private pendingPresentation: number[] = [];
   private requestId = 0;
   private disposed = false;
+  private pixelsPerMeter = 1;
 
   constructor(
     createWorker: () => Worker = () =>
       new Worker(new URL('./terrainRaster.worker.ts', import.meta.url), { type: 'module' }),
+    loadRockTexture: () => Promise<Texture> = () => Assets.load<Texture>(rockVisual.assetUrl),
   ) {
     this.worker = createWorker();
     this.worker.onmessage = (event: MessageEvent<TerrainRasterResponse>) => {
       const response = event.data;
-      this.busy = false;
+      const flight = this.inFlight;
+      this.inFlight = null;
+      if (!flight || response.requestId !== flight.request.requestId) {
+        this.requestNext();
+        return;
+      }
       if (response.type === 'failed') {
-        console.error(`Terrain chunk raster failed: ${response.message}`);
-      } else if (this.isCurrent(response) && !this.pending.has(this.chunkKey(response))) {
-        this.publish(response);
-      } else response.bitmap.close();
+        this.retryOrReport(flight, response.message);
+      } else if (!this.isCurrent(response)) {
+        // A replacement terrain/settings generation already queued full current chunks.
+      } else if (this.pending.has(flight.key)) {
+        // Do not publish an intermediate chunk. Merge the entire in-flight dependency region so
+        // the next request includes both the old work and every edit that arrived during it.
+        this.enqueueRegion({ ...flight.region, retry: 0 });
+      } else this.publish(response);
       this.requestNext();
     };
     this.worker.onerror = (event) => {
-      this.busy = false;
-      console.error(`Terrain raster worker failed: ${event.message}`);
+      const flight = this.inFlight;
+      this.inFlight = null;
+      if (flight) this.retryOrReport(flight, event.message);
+      else console.error(`Terrain field worker failed: ${event.message}`);
       this.requestNext();
     };
+    void this.loadRockTexture(loadRockTexture);
   }
 
-  update(terrain: TerrainGrid, settings: TerrainSmoothingSettings): void {
-    const nextSettingsKey = terrainSmoothingKey(settings);
+  update(
+    terrain: TerrainGrid,
+    settings: TerrainSmoothingSettings,
+    textureSettings: TerrainTextureSettings,
+    pixelsPerMeter = 1,
+  ): void {
     const replaced = terrain !== this.terrain;
-    const settingsChanged = nextSettingsKey !== this.settingsKey;
-    if (replaced || settingsChanged) {
+    this.settings = { ...settings };
+    this.textureSettings = { ...textureSettings };
+    this.pixelsPerMeter = pixelsPerMeter;
+    if (replaced) {
       this.terrain = terrain;
       this.generation++;
-      this.settingsKey = nextSettingsKey;
-      this.settingsRevision++;
-      this.settings = { ...settings };
       this.lastScheduledVersion = terrain.version;
       this.pending.clear();
       this.clearVisuals();
+      const queuedAtMs = performance.now();
       for (const chunk of terrain.chunks)
-        this.enqueue(chunk.id.column, chunk.id.row, {
-          minX: 0,
-          minY: 0,
-          maxX: chunk.width - 1,
-          maxY: chunk.height - 1,
+        this.enqueueRegion({
+          chunkColumn: chunk.id.column,
+          chunkRow: chunk.id.row,
+          rect: { minX: 0, minY: 0, maxX: chunk.width - 1, maxY: chunk.height - 1 },
+          retry: 0,
+          queuedAtMs,
         });
     } else if (terrain.version !== this.lastScheduledVersion) {
       for (const change of terrain.getChangesSince(this.lastScheduledVersion)) {
         if (!change.dirtyRect) continue;
-        this.enqueueGlobalRect({
-          minX: Math.max(0, change.dirtyRect.minX - 1),
-          minY: Math.max(0, change.dirtyRect.minY - 1),
-          maxX: Math.min(terrain.columns - 1, change.dirtyRect.maxX + 1),
-          maxY: Math.min(terrain.rows - 1, change.dirtyRect.maxY + 1),
-        });
+        const padding = terrainVisualInvalidationPaddingCells;
+        this.enqueueGlobalRect(
+          {
+            minX: Math.max(0, change.dirtyRect.minX - padding),
+            minY: Math.max(0, change.dirtyRect.minY - padding),
+            maxX: Math.min(terrain.columns - 1, change.dirtyRect.maxX + padding),
+            maxY: Math.min(terrain.rows - 1, change.dirtyRect.maxY + padding),
+          },
+          performance.now(),
+        );
       }
       this.lastScheduledVersion = terrain.version;
+    }
+    for (const visual of this.visuals.values()) {
+      visual.mesh.setSettings(settings, textureSettings.orientation);
+      visual.mesh.setPixelsPerMeter(pixelsPerMeter);
+      visual.mesh.setRockTexture(this.rockTexture);
+      visual.rockTexture = this.rockTexture;
     }
     this.requestNext();
   }
@@ -113,7 +179,38 @@ export class TerrainLayer {
     return [...this.visuals.values()];
   }
 
-  private enqueueGlobalRect(rect: TerrainRect): void {
+  /** Called from Pixi's post-render runner after fields published this frame are visible. */
+  markRendered(): void {
+    if (this.pendingPresentation.length === 0) return;
+    const renderedAtMs = performance.now();
+    const queuedAtMs = this.pendingPresentation.at(-1);
+    this.pendingPresentation.length = 0;
+    if (queuedAtMs !== undefined) this.metrics.visualLatencyMs = renderedAtMs - queuedAtMs;
+  }
+
+  private async loadRockTexture(loadTexture: () => Promise<Texture>): Promise<void> {
+    try {
+      const texture = await loadTexture();
+      if (this.disposed) return;
+      texture.source.scaleMode = 'linear';
+      texture.source.mipmapFilter = 'linear';
+      texture.source.autoGenerateMipmaps = rockVisual.mipmaps;
+      texture.source.maxAnisotropy = rockVisual.anisotropy;
+      texture.source.addressMode = 'repeat';
+      texture.source.update();
+      this.rockTexture = texture;
+      for (const visual of this.visuals.values()) {
+        visual.rockTexture = texture;
+        visual.mesh.setRockTexture(texture);
+      }
+    } catch (error) {
+      console.warn(
+        `Rock texture could not be loaded; using the material colour fallback. ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  private enqueueGlobalRect(rect: TerrainRect, queuedAtMs: number): void {
     const terrain = this.terrain;
     if (!terrain) return;
     const firstColumn = Math.floor(rect.minX / terrain.chunkSizeCells);
@@ -124,24 +221,34 @@ export class TerrainLayer {
       for (let chunkColumn = firstColumn; chunkColumn <= lastColumn; chunkColumn++) {
         const chunk = terrain.getChunk({ column: chunkColumn, row: chunkRow });
         if (!chunk) continue;
-        this.enqueue(chunkColumn, chunkRow, {
-          minX: Math.max(0, rect.minX - chunk.originX),
-          minY: Math.max(0, rect.minY - chunk.originY),
-          maxX: Math.min(chunk.width - 1, rect.maxX - chunk.originX),
-          maxY: Math.min(chunk.height - 1, rect.maxY - chunk.originY),
+        this.enqueueRegion({
+          chunkColumn,
+          chunkRow,
+          rect: {
+            minX: Math.max(0, rect.minX - chunk.originX),
+            minY: Math.max(0, rect.minY - chunk.originY),
+            maxX: Math.min(chunk.width - 1, rect.maxX - chunk.originX),
+            maxY: Math.min(chunk.height - 1, rect.maxY - chunk.originY),
+          },
+          retry: 0,
+          queuedAtMs,
         });
       }
   }
 
-  private enqueue(chunkColumn: number, chunkRow: number, rect: TerrainRect): void {
-    const key = `${chunkColumn}:${chunkRow}`;
+  private enqueueRegion(region: PendingRegion): void {
+    const key = `${region.chunkColumn}:${region.chunkRow}`;
     const current = this.pending.get(key);
-    if (current) current.rect = unionTerrainRect(current.rect, rect);
-    else this.pending.set(key, { chunkColumn, chunkRow, rect: { ...rect } });
+    if (current) {
+      current.rect = unionTerrainRect(current.rect, region.rect);
+      current.queuedAtMs = Math.min(current.queuedAtMs, region.queuedAtMs);
+      current.retry = Math.max(current.retry, region.retry);
+    } else this.pending.set(key, { ...region, rect: { ...region.rect } });
   }
 
   private requestNext(): void {
-    if (this.disposed || this.busy || !this.terrain || !this.settings) return;
+    if (this.disposed || this.inFlight || !this.terrain || !this.settings || !this.textureSettings)
+      return;
     const entry = this.pending.entries().next().value as [string, PendingRegion] | undefined;
     if (!entry) return;
     const [key, region] = entry;
@@ -150,124 +257,154 @@ export class TerrainLayer {
       column: region.chunkColumn,
       row: region.chunkRow,
     });
-    if (!chunk) return;
-    const width = region.rect.maxX - region.rect.minX + 1;
-    const height = region.rect.maxY - region.rect.minY + 1;
-    const sampleWidth = width + samplePadding * 2;
-    const sampleHeight = height + samplePadding * 2;
+    if (!chunk) return this.requestNext();
+
+    const fieldWidth = chunk.width + terrainFieldHaloCells * 2;
+    const fieldHeight = chunk.height + terrainFieldHaloCells * 2;
+    const samplePadding = terrainFieldSamplePaddingCells;
+    const sampleWidth = fieldWidth + samplePadding * 2;
+    const sampleHeight = fieldHeight + samplePadding * 2;
+    const preparationStarted = performance.now();
     const materials = new Uint8Array(sampleWidth * sampleHeight);
-    const originX = chunk.originX + region.rect.minX - samplePadding;
-    const originY = chunk.originY + region.rect.minY - samplePadding;
+    const originX = chunk.originX - terrainFieldHaloCells - samplePadding;
+    const originY = chunk.originY - terrainFieldHaloCells - samplePadding;
+    const initialSurface = this.terrain.initialSurfaceMeters;
+    const surfaceRows = initialSurface
+      ? Float64Array.from({ length: sampleWidth }, (_, x) => {
+          const height = initialSurface[originX + x];
+          return height === undefined ? Infinity : height / this.terrain!.cellSizeMeters - originY;
+        })
+      : undefined;
     for (let y = 0; y < sampleHeight; y++) {
       const worldY = originY + y;
       if (worldY < 0 || worldY >= this.terrain.rows) continue;
-      for (let x = 0; x < sampleWidth; x++) {
-        const worldX = originX + x;
-        if (worldX < 0 || worldX >= this.terrain.columns) continue;
-        materials[y * sampleWidth + x] =
-          this.terrain.cells[worldY * this.terrain.columns + worldX] ?? 0;
-      }
+      const sourceStart = worldY * this.terrain.columns + Math.max(0, originX);
+      const targetStart = y * sampleWidth + Math.max(0, -originX);
+      const copyWidth = Math.max(
+        0,
+        Math.min(sampleWidth - Math.max(0, -originX), this.terrain.columns - Math.max(0, originX)),
+      );
+      if (copyWidth > 0)
+        materials.set(
+          this.terrain.cells.subarray(sourceStart, sourceStart + copyWidth),
+          targetStart,
+        );
     }
     const request: TerrainRasterRequest = {
-      type: 'rasterizeChunk',
+      type: 'buildTerrainField',
       requestId: ++this.requestId,
       generation: this.generation,
       terrainVersion: this.terrain.version,
-      settingsRevision: this.settingsRevision,
       chunkColumn: region.chunkColumn,
       chunkRow: region.chunkRow,
-      localX: region.rect.minX,
-      localY: region.rect.minY,
-      width,
-      height,
+      chunkWidth: chunk.width,
+      chunkHeight: chunk.height,
+      fieldWidth,
+      fieldHeight,
       sampleWidth,
       sampleHeight,
       samplePadding,
       materials: materials.buffer,
-      settings: { ...this.settings },
+      ...(surfaceRows ? { surfaceRows: surfaceRows.buffer } : {}),
+      queuedAtMs: region.queuedAtMs,
+      retry: region.retry,
     };
-    this.busy = true;
-    this.worker.postMessage(request, [request.materials]);
+    this.metrics.prepareUpdateMs = performance.now() - preparationStarted;
+    this.inFlight = { key, region, request };
+    this.worker.postMessage(request, [
+      request.materials,
+      ...(request.surfaceRows ? [request.surfaceRows] : []),
+    ]);
+  }
+
+  private retryOrReport(flight: InFlightRequest, message: string): void {
+    if (flight.request.generation !== this.generation) return;
+    if (flight.region.retry < maxWorkerRetries) {
+      this.enqueueRegion({ ...flight.region, retry: flight.region.retry + 1 });
+      return;
+    }
+    console.error(`Terrain field worker failed after ${maxWorkerRetries + 1} attempts: ${message}`);
   }
 
   private isCurrent(response: TerrainRasterResult): boolean {
-    return (
-      !this.disposed &&
-      response.generation === this.generation &&
-      response.settingsRevision === this.settingsRevision
-    );
-  }
-
-  private chunkKey(response: Pick<TerrainRasterResult, 'chunkColumn' | 'chunkRow'>): string {
-    return `${response.chunkColumn}:${response.chunkRow}`;
+    return !this.disposed && response.generation === this.generation;
   }
 
   private publish(result: TerrainRasterResult): void {
+    const started = performance.now();
     const terrain = this.terrain;
     const settings = this.settings;
-    if (!terrain || !settings) {
-      result.bitmap.close();
-      return;
-    }
+    const textureSettings = this.textureSettings;
+    if (!terrain || !settings || !textureSettings) return;
     const chunk = terrain.getChunk({ column: result.chunkColumn, row: result.chunkRow });
-    if (!chunk) {
-      result.bitmap.close();
-      return;
-    }
-    const key = this.chunkKey(result);
+    if (!chunk) return;
+    const key = `${result.chunkColumn}:${result.chunkRow}`;
+    const field = new Uint8Array(result.field);
     let visual = this.visuals.get(key);
-    if (!visual || visual.canvas.width !== chunk.width * result.scale) {
-      if (visual) {
-        this.visuals.delete(key);
-        visual.sprite.destroy();
-        visual.texture.destroy(true);
-      }
-      const canvas = document.createElement('canvas');
-      canvas.width = chunk.width * result.scale;
-      canvas.height = chunk.height * result.scale;
-      const texture = Texture.from(canvas, true);
-      texture.source.scaleMode = settings.enabled ? 'linear' : 'nearest';
-      const sprite = new Sprite(texture);
-      sprite.position.set(
-        chunk.originX * terrain.cellSizeMeters,
-        chunk.originY * terrain.cellSizeMeters,
-      );
-      sprite.width = chunk.width * terrain.cellSizeMeters;
-      sprite.height = chunk.height * terrain.cellSizeMeters;
+    if (
+      !visual ||
+      visual.fieldTexture.source.pixelWidth !== result.fieldWidth ||
+      visual.fieldTexture.source.pixelHeight !== result.fieldHeight
+    ) {
+      if (visual) this.destroyVisual(key, visual);
+      const source = new BufferImageSource({
+        resource: field,
+        width: result.fieldWidth,
+        height: result.fieldHeight,
+        format: 'rgba8unorm',
+        alphaMode: 'no-premultiply-alpha',
+        scaleMode: settings.enabled ? 'linear' : 'nearest',
+        autoGenerateMipmaps: false,
+        autoGarbageCollect: false,
+      });
+      const fieldTexture = new Texture({ source, label: `terrain-field-${key}` });
+      const mesh = new TerrainChunkMesh({
+        fieldTexture,
+        rockTexture: this.rockTexture,
+        chunkOriginMeters: [
+          chunk.originX * terrain.cellSizeMeters,
+          chunk.originY * terrain.cellSizeMeters,
+        ],
+        chunkSizeMeters: [
+          chunk.width * terrain.cellSizeMeters,
+          chunk.height * terrain.cellSizeMeters,
+        ],
+        fieldSize: [result.fieldWidth, result.fieldHeight],
+        smoothing: settings,
+        orientation: textureSettings.orientation,
+      });
+      mesh.setPixelsPerMeter(this.pixelsPerMeter);
       visual = {
         chunkColumn: chunk.id.column,
         chunkRow: chunk.id.row,
-        sprite,
-        texture,
-        canvas,
+        mesh,
+        fieldTexture,
+        rockTexture: this.rockTexture,
       };
       this.visuals.set(key, visual);
-      this.container.addChild(sprite);
+      this.container.addChild(mesh.view);
+    } else {
+      const source = visual.fieldTexture.source as BufferImageSource;
+      source.resource = field;
+      source.update();
+      visual.mesh.setSettings(settings, textureSettings.orientation);
     }
-    const context = visual.canvas.getContext('2d');
-    if (!context) throw new Error('Canvas 2D is unavailable.');
-    // The worker returns transparent pixels for newly empty terrain. Clear only this dirty region
-    // before source-over; canvas `copy` would also clear the rest of the chunk.
-    context.clearRect(
-      result.localX * result.scale,
-      result.localY * result.scale,
-      result.width * result.scale,
-      result.height * result.scale,
-    );
-    context.drawImage(result.bitmap, result.localX * result.scale, result.localY * result.scale);
-    result.bitmap.close();
-    visual.texture.source.update();
-    this.metrics.visualUpdateMs = result.visualUpdateMs;
+    this.metrics.workerUpdateMs = result.fieldBuildMs;
+    this.metrics.publishUpdateMs = performance.now() - started;
+    this.metrics.workerRoundTripMs = started - result.queuedAtMs;
+    this.pendingPresentation.push(result.queuedAtMs);
     this.metrics.updatedChunkCount = 1;
-    this.metrics.updatedPixelCount = result.width * result.height;
+    this.metrics.updatedPixelCount = result.chunkWidth * result.chunkHeight;
+  }
+
+  private destroyVisual(key: string, visual: TerrainVisualChunk): void {
+    this.visuals.delete(key);
+    visual.mesh.destroy();
+    visual.fieldTexture.destroy(true);
   }
 
   private clearVisuals(): void {
-    for (const visual of this.visuals.values()) {
-      visual.sprite.destroy();
-      visual.texture.destroy(true);
-    }
-    this.visuals.clear();
+    for (const [key, visual] of this.visuals) this.destroyVisual(key, visual);
     this.container.removeChildren();
   }
 
@@ -275,6 +412,8 @@ export class TerrainLayer {
     this.disposed = true;
     this.worker.terminate();
     this.pending.clear();
+    this.inFlight = null;
+    this.pendingPresentation = [];
     this.clearVisuals();
     this.container.destroy();
   }

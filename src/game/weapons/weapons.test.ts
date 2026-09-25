@@ -189,6 +189,7 @@ describe('weapon commands and preview', () => {
     'uses identical live and preview positions for %s',
     (weaponId) => {
       const config = cloneConfig();
+      config.terrain.cellSizeMeters = 0.2;
       config.physics = { gravity: 8, windAcceleration: -1.5, airDrag: 0.06 };
       const state = createGameState(config, 12345);
       executeCommand(state, config, { type: 'setWeapon', cannonId: 1, weaponId });

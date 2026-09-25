@@ -1,8 +1,18 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { cloneConfig } from '../config/defaultGameConfig';
 import { toRadians } from '../math/Vec2';
 import { GameRuntime } from './GameRuntime';
 import { spawnCannon } from '../entities/Cannon';
+
+vi.mock('../terrain/generateTerrain', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../terrain/generateTerrain')>();
+  const { generateLegacyTerrain } = await import('./fixtures/legacyTerrain');
+  return {
+    ...original,
+    generateTerrain: (...args: Parameters<typeof original.generateTerrain>) =>
+      generateLegacyTerrain(...args, original.createSeededRandom),
+  };
+});
 
 // Captured from ballistic-mvp-v1 BEFORE the weapon/impact migration.
 // Keep these snapshots fixed: they protect integration, contact and destruction.
@@ -17,6 +27,7 @@ describe('ballistic MVP baseline', () => {
     // Preserve the original map geometry now that new scenes span three camera widths.
     config.world.widthMeters = 120;
     config.world.heightMeters = 64;
+    config.terrain.cellSizeMeters = 0.2;
     // The unchanged Step 1/2 snapshots describe the all-Soil fixture.
     config.terrain.rockDepthMeters = null;
     config.physics.windAcceleration = wind;

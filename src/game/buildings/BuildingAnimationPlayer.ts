@@ -13,8 +13,10 @@ import type {
   BuildingAnimationConfig,
   BuildingAnimationEasing,
   BuildingAnimationTransition,
+  BuildingAnimationTrackProperty,
   DissolveDirection,
 } from './BuildingAnimationConfig';
+import { defaultTrackValue, sampleBuildingTrack } from './BuildingAnimationKeyframes';
 
 export type BuildingTextureResolver = (assetId: string) => string | Texture | Promise<Texture>;
 
@@ -117,6 +119,8 @@ const ease = (value: number, easing: BuildingAnimationEasing) => {
   return value;
 };
 
+const degreesToRadians = (degrees: number) => (degrees * Math.PI) / 180;
+
 function createDissolveFilter() {
   const uniforms = new UniformGroup({
     uProgress: { value: 0, type: 'f32' },
@@ -169,7 +173,10 @@ export class BuildingAnimationPlayer {
       config.stages.map((stage) => stage.assetId).join('|');
     this.config = structuredClone(config);
     if (assetIdsChanged || reloadTextures) await this.loadTextures(resolveTexture);
-    else if (optimizationChanged) this.applyTextureOptimization();
+    else {
+      this.arrangeSprites();
+      if (optimizationChanged) this.applyTextureOptimization();
+    }
     this.drawHitbox();
     this.setProgress(this.progress);
   }
@@ -183,6 +190,18 @@ export class BuildingAnimationPlayer {
       source.autoGenerateMipmaps = optimization.mipmaps;
       source.maxAnisotropy = optimization.anisotropy;
       source.update();
+    }
+  }
+
+  private arrangeSprites(): void {
+    for (const sprite of this.sprites.values())
+      if (sprite.parent === this.container) this.container.removeChild(sprite);
+    for (const stage of [...this.config.stages].sort(
+      (left, right) => right.layerOrder - left.layerOrder,
+    )) {
+      const sprite = this.sprites.get(stage.id);
+      if (sprite)
+        this.container.addChildAt(sprite, Math.max(0, this.container.children.length - 1));
     }
   }
 
@@ -232,8 +251,8 @@ export class BuildingAnimationPlayer {
       if (result.owned) this.ownedTextures.add(result.texture);
       const sprite = new Sprite(result.texture);
       this.sprites.set(result.id, sprite);
-      this.container.addChildAt(sprite, Math.max(0, this.container.children.length - 1));
     }
+    this.arrangeSprites();
     this.applyTextureOptimization();
     this.drawHitbox();
     this.setProgress(this.progress);
@@ -266,10 +285,23 @@ export class BuildingAnimationPlayer {
     for (const [index, stage] of stages.entries()) {
       const sprite = this.sprites.get(stage.id);
       if (!sprite) continue;
-      sprite.position.set(stage.x - this.config.origin.x, stage.y - this.config.origin.y);
-      sprite.scale.set(stage.scale);
-      sprite.visible = index === activeIndex || index === activeIndex + 1;
-      sprite.alpha = index === activeIndex ? 1 : amount;
+      const sample = (property: BuildingAnimationTrackProperty) =>
+        sampleBuildingTrack(
+          this.config.tracks.find(
+            (track) => track.stageId === stage.id && track.property === property,
+          ),
+          this.progress,
+          defaultTrackValue(stage, property),
+        );
+      sprite.position.set(sample('x') - this.config.origin.x, sample('y') - this.config.origin.y);
+      sprite.scale.set(sample('scaleX'), sample('scaleY'));
+      sprite.rotation = degreesToRadians(sample('rotation'));
+      sprite.skew.set(degreesToRadians(sample('skewX')), degreesToRadians(sample('skewY')));
+      sprite.pivot.set(sample('pivotX'), sample('pivotY'));
+      sprite.visible =
+        this.progress >= stage.inPoint &&
+        (this.progress < stage.outPoint || (this.progress === 1 && stage.outPoint === 1));
+      sprite.alpha = sample('opacity') * (index === activeIndex + 1 ? amount : 1);
       sprite.mask = null;
       sprite.filters = null;
       sprite.tint = 0xffffff;
@@ -279,7 +311,7 @@ export class BuildingAnimationPlayer {
     const nextSprite = next ? this.sprites.get(next.id) : undefined;
     if (!transition || !nextSprite) return;
     if (transition.type === 'crossfade') {
-      if (currentSprite) currentSprite.alpha = 1 - amount;
+      if (currentSprite) currentSprite.alpha *= 1 - amount;
       return;
     }
     if (transition.type === 'reveal') {

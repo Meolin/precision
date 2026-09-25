@@ -32,7 +32,7 @@ export const defaultGameConfig: GameConfig = {
   },
   weaponOverrides: {},
   terrain: {
-    cellSizeMeters: 0.2,
+    cellSizeMeters: 0.1,
     chunkSizeCells: 256,
     surfaceHeightFraction: 0.7,
     waveAmplitudeMeters: 4.2,
@@ -179,7 +179,7 @@ export function validateConfig(input: GameConfig): GameConfig {
   if (
     Math.ceil(config.world.widthMeters / config.terrain.cellSizeMeters) *
       Math.ceil(config.world.heightMeters / config.terrain.cellSizeMeters) >
-    4_000_000
+    40_000_000
   )
     throw new Error('Terrain exceeds the MVP grid budget.');
   if (config.preview.maxPoints < 2) throw new Error('Preview requires at least two points.');

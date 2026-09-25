@@ -7,6 +7,7 @@ import { SceneRenderer } from './SceneRenderer';
 import type { RtsController } from '../client/RtsController';
 import type { ShaderSettings } from './ShaderSettings';
 import type { TerrainSmoothingSettings } from './TerrainSmoothingSettings';
+import type { TerrainTextureSettings } from './TerrainTextureSettings';
 import type { BuildingAnimationPreview } from '../buildings/BuildingAnimationPreview';
 
 extend({ Container });
@@ -17,6 +18,7 @@ export function GameScene({
   debug,
   shaders,
   terrainSmoothing,
+  terrainTexture,
   buildingPreview,
 }: {
   runtime: GameRuntime;
@@ -24,6 +26,7 @@ export function GameScene({
   debug: DebugOptions;
   shaders: ShaderSettings;
   terrainSmoothing: TerrainSmoothingSettings;
+  terrainTexture: TerrainTextureSettings;
   buildingPreview?: BuildingAnimationPreview;
 }) {
   const { app } = useApplication();
@@ -32,12 +35,15 @@ export function GameScene({
   useEffect(() => {
     if (!root.current) return;
     const scene = new SceneRenderer(root.current);
+    const postrender = { postrender: () => scene.markRendered() };
+    app.renderer.runners.postrender.add(postrender);
     renderer.current = scene;
     return () => {
       renderer.current = null;
+      app.renderer.runners.postrender.remove(postrender);
       scene.destroy();
     };
-  }, []);
+  }, [app]);
 
   const frame = useCallback(
     (ticker: Ticker) => {
@@ -50,12 +56,13 @@ export function GameScene({
         debug,
         shaders,
         terrainSmoothing,
+        terrainTexture,
         buildingPreview,
         app.screen.width,
         app.screen.height,
       );
     },
-    [app, runtime, controls, debug, shaders, terrainSmoothing, buildingPreview],
+    [app, runtime, controls, debug, shaders, terrainSmoothing, terrainTexture, buildingPreview],
   );
   useTick(frame);
   return <pixiContainer ref={root} />;

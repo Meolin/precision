@@ -13,6 +13,11 @@ describe('terrain material visuals', () => {
       Material.Soil,
       Material.Rock,
     ]);
+    expect(terrainMaterialVisuals[Material.Rock].texture).toMatchObject({
+      assetUrl: '/Textures/Environment/Stone_example.png',
+      tileWidthMeters: 19.2,
+      mipmaps: true,
+    });
   });
 
   it('ignores Air weight and supplies edge pixels for the alpha mask', () => {

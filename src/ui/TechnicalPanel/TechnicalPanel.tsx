@@ -29,6 +29,11 @@ import {
   isTerrainSmoothingQuality,
   type TerrainSmoothingSettings,
 } from '../../game/rendering/TerrainSmoothingSettings';
+import {
+  defaultTerrainTextureSettings,
+  isTerrainTextureOrientation,
+  type TerrainTextureSettings,
+} from '../../game/rendering/TerrainTextureSettings';
 
 interface Props {
   runtime: GameRuntime;
@@ -39,6 +44,8 @@ interface Props {
   onShaders: (settings: ShaderSettings) => void;
   terrainSmoothing: TerrainSmoothingSettings;
   onTerrainSmoothing: (settings: TerrainSmoothingSettings) => void;
+  terrainTexture: TerrainTextureSettings;
+  onTerrainTexture: (settings: TerrainTextureSettings) => void;
   paused: boolean;
   onSetting: (setting: NumericSetting, value: number) => void;
   onDamagePopupCurve: (curve: DamagePopupVelocityCurve) => void;
@@ -324,6 +331,7 @@ function NumericControl({
 }
 
 const groups: { section: EditableSection; title: string; number: string }[] = [
+  { section: 'terrain', title: 'Сетка карты', number: 'TERRAIN' },
   { section: 'damagePopup', title: 'Таблички урона', number: 'FX' },
   { section: 'simulation', title: 'Симуляция', number: '01' },
   { section: 'physics', title: 'Физика мира', number: '02' },
@@ -354,6 +362,8 @@ export function TechnicalPanel({
   onShaders,
   terrainSmoothing,
   onTerrainSmoothing,
+  terrainTexture,
+  onTerrainTexture,
   paused,
   onSetting,
   onDamagePopupCurve,
@@ -427,7 +437,7 @@ export function TechnicalPanel({
         </CollapsibleSettingsGroup>
         <CollapsibleSettingsGroup
           title="Сглаживание рельефа"
-          meta={terrainSmoothing.enabled ? `${terrainSmoothing.quality}×` : 'ВЫКЛ'}
+          meta={terrainSmoothing.enabled ? `AA ${terrainSmoothing.quality}` : 'ВЫКЛ'}
           ariaLabel="Сглаживание рельефа"
         >
           <label className="check-row">
@@ -452,13 +462,17 @@ export function TechnicalPanel({
                   onTerrainSmoothing({ ...terrainSmoothing, quality });
               }}
             >
-              <option value={1}>1×</option>
-              <option value={2}>2×</option>
-              <option value={4}>4×</option>
+              <option value={1}>Низкое · 1×1</option>
+              <option value={2}>Среднее · 2×2</option>
+              <option value={4}>Высокое · 4×4</option>
+              <option value={8}>Очень высокое · 8×8</option>
+              <option value={16}>Максимальное · 16×16</option>
             </select>
           </div>
           <p className="settings-note">
-            Изображение строится асинхронно; физическая сетка и столкновения не меняются.
+            Плавный контур восстанавливается из поля расстояний. Число выборок края на экранный
+            пиксель: 1, 4, 16, 64 или 256. Высшие уровни сильнее нагружают GPU. Текстуры материалов
+            и физическая сетка от этой настройки не зависят.
           </p>
           <button
             className="shader-reset"
@@ -466,6 +480,35 @@ export function TechnicalPanel({
             onClick={() => onTerrainSmoothing({ ...defaultTerrainSmoothingSettings })}
           >
             Сбросить настройки сглаживания
+          </button>
+        </CollapsibleSettingsGroup>
+        <CollapsibleSettingsGroup title="Текстуры рельефа" meta="ROCK" ariaLabel="Текстуры рельефа">
+          <div className="select-row">
+            <label htmlFor="terrain-texture-orientation">Ориентация</label>
+            <select
+              id="terrain-texture-orientation"
+              value={terrainTexture.orientation}
+              onChange={(event) => {
+                const orientation = event.target.value;
+                if (isTerrainTextureOrientation(orientation))
+                  onTerrainTexture({ ...terrainTexture, orientation });
+              }}
+            >
+              <option value="mirrored">Зеркально</option>
+              <option value="sequential">Подряд</option>
+              <option value="mirror-x">Зеркально по одной оси</option>
+              <option value="random">Рандом</option>
+            </select>
+          </div>
+          <p className="settings-note">
+            Меняет раскладку текстуры Rock. Рандомная ориентация стабильна для каждой плитки.
+          </p>
+          <button
+            className="shader-reset"
+            type="button"
+            onClick={() => onTerrainTexture({ ...defaultTerrainTextureSettings })}
+          >
+            Сбросить настройки текстур
           </button>
         </CollapsibleSettingsGroup>
         <CollapsibleSettingsGroup title="Сущности" meta="ENTITIES" ariaLabel="Сущности">
@@ -614,6 +657,12 @@ export function TechnicalPanel({
                   onChange={(value) => onSetting(setting, value)}
                 />
               ))}
+            {group.section === 'terrain' && (
+              <p className="settings-note">
+                Размер физической ячейки рельефа. Изменение создаёт карту заново с текущим seed и
+                сбрасывает сцену. Чем меньше ячейка, тем подробнее рельеф и выше нагрузка.
+              </p>
+            )}
             {group.section === 'damagePopup' && (
               <>
                 <BezierCurveControl

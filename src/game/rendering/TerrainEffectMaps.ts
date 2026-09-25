@@ -1,6 +1,7 @@
 import { Texture } from 'pixi.js';
 import type { RecentExplosion } from '../core/GameRuntime';
 import type { TerrainGrid } from '../terrain/TerrainGrid';
+import { unionTerrainRect, type TerrainRect } from '../terrain/TerrainChunk';
 import { shaderValue, type ShaderSettings } from './ShaderSettings';
 
 function surface() {
@@ -20,7 +21,8 @@ export class TerrainEffectMaps {
   readonly lightTexture = Texture.from(this.light.canvas, true);
   readonly heatTexture = Texture.from(this.heat.canvas, true);
   private grid: TerrainGrid | null = null;
-  private baseKey = '';
+  private baseSettingsKey = '';
+  private baseVersion = -1;
   private lightKey = '';
   private heatKey = '';
   private heatGrid: TerrainGrid | null = null;
@@ -39,17 +41,24 @@ export class TerrainEffectMaps {
     const sy = canvas.height / height;
     const activeLights = explosions.filter((item) => time - item.timeSeconds < 0.65);
     if (settings.effects.lightmap.enabled) {
-      const key = `${terrain.version}:${value('lightmap', 'ambient')}:${value('lightmap', 'depth')}`;
-      const changed = this.grid !== terrain || this.baseKey !== key;
+      const settingsKey = `${value('lightmap', 'ambient')}:${value('lightmap', 'depth')}`;
+      const fullRebuild = this.grid !== terrain || this.baseSettingsKey !== settingsKey;
+      let dirtyRect: TerrainRect | undefined;
+      if (!fullRebuild && terrain.version !== this.baseVersion)
+        for (const change of terrain.getChangesSince(this.baseVersion)) {
+          if (change.dirtyRect) dirtyRect = unionTerrainRect(dirtyRect, change.dirtyRect);
+        }
+      const changed = fullRebuild || terrain.version !== this.baseVersion;
       if (changed) {
-        const pixels = context.createImageData(canvas.width, canvas.height);
+        const pixels = context.getImageData(0, 0, canvas.width, canvas.height);
         for (let x = 0; x < canvas.width; x++) {
+          const col = Math.min(
+            terrain.columns - 1,
+            Math.floor(((x + 0.5) / canvas.width) * terrain.columns),
+          );
+          if (!fullRebuild && dirtyRect && (col < dirtyRect.minX || col > dirtyRect.maxX)) continue;
           let depth = 0;
           for (let y = 0; y < canvas.height; y++) {
-            const col = Math.min(
-              terrain.columns - 1,
-              Math.floor(((x + 0.5) / canvas.width) * terrain.columns),
-            );
             const row = Math.min(
               terrain.rows - 1,
               Math.floor(((y + 0.5) / canvas.height) * terrain.rows),
@@ -66,8 +75,10 @@ export class TerrainEffectMaps {
         }
         context.putImageData(pixels, 0, 0);
         this.grid = terrain;
-        this.baseKey = key;
+        this.baseSettingsKey = settingsKey;
+        this.baseVersion = terrain.version;
       }
+      const key = `${terrain.version}:${settingsKey}`;
       const lightKey = `${key}:${activeLights.length}:${activeLights.at(-1)?.event.resolution.explosion.sourceProjectileId}:${activeLights.length ? Math.floor(time * 30) : 'idle'}:${value('lightmap', 'flash')}:${value('lightmap', 'radius')}`;
       if (changed || lightKey !== this.lightKey) {
         const ctx = this.light.context;
