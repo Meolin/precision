@@ -126,10 +126,16 @@ export class ScenePostProcessing {
       this.bloom.bloomScale = value('bloom', 'strength');
       this.bloom.blur = value('bloom', 'blur');
       this.heat.scale.set(value('heat', 'strength'));
-      this.assign(this.layers.terrain, [
-        ...(enabled('bevel') ? [this.bevel] : []),
-        ...(enabled('lightmap') ? [this.lightmap] : []),
-      ]);
+      const inspectingMaterial = value('terrainLighting', 'display') !== 0;
+      this.assign(
+        this.layers.terrain,
+        inspectingMaterial
+          ? []
+          : [
+              ...(enabled('bevel') ? [this.bevel] : []),
+              ...(enabled('lightmap') ? [this.lightmap] : []),
+            ],
+      );
       this.assign(this.layers.background, enabled('blur') ? [this.blur] : []);
       this.assign(this.layers.cannonBases, enabled('shadow') ? [this.shadow] : []);
       this.assign(this.combat, [

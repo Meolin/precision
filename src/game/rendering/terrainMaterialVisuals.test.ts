@@ -18,6 +18,11 @@ describe('terrain material visuals', () => {
       tileWidthMeters: 19.2,
       mipmaps: true,
     });
+    expect(terrainMaterialVisuals[Material.Soil].texture).toMatchObject({
+      assetUrl: '/Textures/Environment/soil_1.png',
+      tileWidthMeters: 19.2,
+      mipmaps: true,
+    });
   });
 
   it('ignores Air weight and supplies edge pixels for the alpha mask', () => {

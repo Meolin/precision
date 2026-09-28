@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { GlProgram, Texture } from 'pixi.js';
 import {
   TerrainChunkMesh,
+  terrainTextureFormatIndex,
   terrainTextureOrientationIndex,
   terrainTextureWorldSize,
 } from './TerrainChunkMesh';
@@ -25,6 +26,11 @@ describe('terrain chunk material coordinates', () => {
   it('rejects invalid texture dimensions instead of compressing them', () => {
     expect(() => terrainTextureWorldSize(0, 100)).toThrow();
   });
+
+  it('addresses regular and horizontally combined material textures', () => {
+    expect(terrainTextureFormatIndex('albedo')).toBe(0);
+    expect(terrainTextureFormatIndex('albedo-normal-horizontal')).toBe(1);
+  });
 });
 
 describe('terrain chunk material settings', () => {
@@ -32,7 +38,10 @@ describe('terrain chunk material settings', () => {
     const program = vi.spyOn(GlProgram, 'from').mockReturnValue({} as GlProgram);
     const mesh = new TerrainChunkMesh({
       fieldTexture: Texture.WHITE,
+      soilTexture: Texture.WHITE,
       rockTexture: Texture.WHITE,
+      rockAlphaTexture: null,
+      rockTextureFormat: 'albedo',
       chunkOriginMeters: [0, 0],
       chunkSizeMeters: [8, 8],
       fieldSize: [12, 12],

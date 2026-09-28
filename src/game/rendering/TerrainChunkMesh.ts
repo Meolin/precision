@@ -1,6 +1,8 @@
 import { GlProgram, Mesh, MeshGeometry, Shader, Texture, UniformGroup } from 'pixi.js';
 import type { TerrainSmoothingSettings } from './TerrainSmoothingSettings';
-import type { TerrainTextureOrientation } from './TerrainTextureSettings';
+import type { TerrainTextureFormat, TerrainTextureOrientation } from './TerrainTextureSettings';
+import type { MaterialMaps } from './MaterialMaps';
+import type { TerrainLightingSettings } from './TerrainLightingSettings';
 import { terrainMaterialVisuals, type TerrainVisualColor } from './terrainMaterialVisuals';
 import { TerrainMaterialId } from '../terrain/TerrainMaterialId';
 import {
@@ -38,25 +40,43 @@ in vec2 vWorldPosition;
 in vec4 vColor;
 out vec4 finalColor;
 uniform sampler2D uField;
+uniform sampler2D uSoilTexture;
 uniform sampler2D uRockTexture;
+uniform sampler2D uRockAlphaTexture;
+uniform sampler2D uHeightMap;
+uniform sampler2D uNormalMap;
 uniform float uSmoothingEnabled;
 uniform float uSmoothingQuality;
 uniform vec2 uFieldTexelSize;
 uniform float uTextureOrientation;
 uniform vec2 uRockTileSize;
+uniform vec2 uSoilTileSize;
 uniform float uRockOpacity;
+uniform float uSoilOpacity;
+uniform float uRockTextureFormat;
+uniform float uRockAlphaReady;
 uniform vec3 uSoilBody;
 uniform vec3 uSoilSurface;
 uniform vec3 uSoilEdge;
 uniform vec3 uRockBody;
 uniform vec3 uRockSurface;
 uniform vec3 uRockEdge;
+uniform vec2 uLightPosition;
+uniform float uLightIntensity;
+uniform float uLightRadius;
+uniform float uNormalStrength;
+uniform float uAmbient;
+uniform vec3 uLightColor;
+uniform float uLightBlendMode;
+uniform float uLightingEnabled;
+uniform float uMaterialMapsReady;
+uniform float uDisplayMode;
 
 float tileHash(vec2 tile) {
   return fract(sin(dot(tile, vec2(127.1, 311.7))) * 43758.5453123);
 }
 
-vec2 textureCoordinate(vec2 scaled, inout vec2 gradientX, inout vec2 gradientY) {
+vec2 textureCoordinate(vec2 scaled, inout vec2 gradientX, inout vec2 gradientY, out mat2 uvJacobian) {
   vec2 tile = floor(scaled);
   vec2 local = fract(scaled);
   bool mirrorX = false;
@@ -85,17 +105,21 @@ vec2 textureCoordinate(vec2 scaled, inout vec2 gradientX, inout vec2 gradientY) 
     gradientX.y = -gradientX.y;
     gradientY.y = -gradientY.y;
   }
+  uvJacobian = mat2(mirrorX ? -1.0 : 1.0, 0.0, 0.0, mirrorY ? -1.0 : 1.0);
   if (quarterTurns < 0.5) return local;
   if (quarterTurns < 1.5) {
+    uvJacobian = mat2(0.0, 1.0, -1.0, 0.0) * uvJacobian;
     gradientX = vec2(-gradientX.y, gradientX.x);
     gradientY = vec2(-gradientY.y, gradientY.x);
     return vec2(1.0 - local.y, local.x);
   }
   if (quarterTurns < 2.5) {
+    uvJacobian = -uvJacobian;
     gradientX = -gradientX;
     gradientY = -gradientY;
     return vec2(1.0 - local.x, 1.0 - local.y);
   }
+  uvJacobian = mat2(0.0, -1.0, 1.0, 0.0) * uvJacobian;
   gradientX = vec2(gradientX.y, -gradientX.x);
   gradientY = vec2(gradientY.y, -gradientY.x);
   return vec2(local.y, 1.0 - local.x);
@@ -126,8 +150,11 @@ void main(void) {
   float coverageDx = dFdx(centerCoverage);
   float coverageDy = dFdy(centerCoverage);
   vec2 continuousRockUv = vWorldPosition / max(uRockTileSize, vec2(0.001));
+  vec2 continuousSoilUv = vWorldPosition / max(uSoilTileSize, vec2(0.001));
   vec2 rockDx = dFdx(continuousRockUv);
   vec2 rockDy = dFdy(continuousRockUv);
+  vec2 soilDx = dFdx(continuousSoilUv);
+  vec2 soilDy = dFdy(continuousSoilUv);
   // The field texture is opaque to preserve signed distances in air texels. R at each
   // texel centre retains the authoritative occupancy sign for the unsmoothed mode.
   ivec2 fieldCell = clamp(ivec2(floor(vFieldUv / uFieldTexelSize)),
@@ -159,22 +186,70 @@ void main(void) {
   float shade = uSmoothingEnabled > 0.5
     ? clamp(1.0 - max(0.0, (centerCoverage - 0.5) * ${(2 * terrainFieldDistanceRangeCells).toFixed(1)}) / ${terrainFieldSurfaceDepthCells.toFixed(1)}, 0.0, 1.0)
     : field.b;
-  vec3 soil = shadedColor(
+  vec3 soilBase = shadedColor(
     uSoilBody,
     uSoilSurface,
     uSoilEdge,
     shade
   );
+  vec3 soilTexture = textureGrad(uSoilTexture, fract(continuousSoilUv), soilDx, soilDy).rgb;
+  vec3 soil = mix(soilBase, soilTexture, uSoilOpacity);
   vec3 rockBase = shadedColor(
     uRockBody,
     uRockSurface,
     uRockEdge,
     shade
   );
-  vec2 rockUv = textureCoordinate(continuousRockUv, rockDx, rockDy);
-  vec3 rockTexture = textureGrad(uRockTexture, rockUv, rockDx, rockDy).rgb;
+  mat2 uvJacobian;
+  vec2 rockUv = textureCoordinate(continuousRockUv, rockDx, rockDy, uvJacobian);
+  vec2 rockAlbedoUv = rockUv;
+  vec2 rockAlbedoDx = rockDx;
+  vec2 rockAlbedoDy = rockDy;
+  if (uRockTextureFormat > 0.5) {
+    rockAlbedoUv.x *= 0.5;
+    rockAlbedoDx.x *= 0.5;
+    rockAlbedoDy.x *= 0.5;
+  }
+  vec3 rockTexture = textureGrad(uRockTexture, rockAlbedoUv, rockAlbedoDx, rockAlbedoDy).rgb;
   vec3 rock = mix(rockBase, rockTexture, uRockOpacity);
-  vec3 color = mix(soil, rock, field.g);
+  float rockMix = field.g;
+  if (uRockAlphaReady > 0.5) {
+    float rockAbove = texture(uField, vFieldUv - vec2(0.0, uFieldTexelSize.y)).g;
+    float upperEdge = smoothstep(0.01, 0.2, field.g - rockAbove) *
+      (1.0 - smoothstep(0.96, 1.0, field.g));
+    float alphaMask = textureGrad(uRockAlphaTexture, rockUv, rockDx, rockDy).r;
+    rockMix = mix(field.g, field.g * alphaMask, upperEdge);
+  }
+  vec3 color = mix(soil, rock, rockMix);
+  if (uDisplayMode > 0.5 && rockMix > 0.5) {
+    if (uDisplayMode < 1.5) color = rockTexture;
+    else if (uDisplayMode < 2.5) color = vec3(textureGrad(uHeightMap, rockUv, rockDx, rockDy).r);
+    else color = textureGrad(uNormalMap, rockUv, rockDx, rockDy).rgb;
+  } else if (uLightingEnabled > 0.5 && uMaterialMapsReady > 0.5) {
+    vec3 mapped = textureGrad(uNormalMap, rockUv, rockDx, rockDy).rgb * 2.0 - 1.0;
+    vec2 materialNormal = transpose(uvJacobian) * mapped.xy;
+    vec2 contourGradient = vec2(
+      texture(uField, vFieldUv + vec2(uFieldTexelSize.x, 0.0)).r -
+      texture(uField, vFieldUv - vec2(uFieldTexelSize.x, 0.0)).r,
+      texture(uField, vFieldUv + vec2(0.0, uFieldTexelSize.y)).r -
+      texture(uField, vFieldUv - vec2(0.0, uFieldTexelSize.y)).r
+    );
+    // Occupancy distance rises into solid terrain; its negative gradient faces new air.
+    float rim = 1.0 - smoothstep(0.0, 0.12, abs(centerCoverage - 0.5));
+    vec2 contourNormal = -normalize(contourGradient + vec2(0.00001)) * rim;
+    vec3 normal = normalize(vec3(materialNormal * uNormalStrength * rockMix + contourNormal * 0.85, 1.0));
+    vec2 toLight = uLightPosition - vWorldPosition;
+    float distanceToLight = length(toLight);
+    vec3 lightDirection = normalize(vec3(toLight, max(2.0, uLightRadius * 0.35)));
+    float attenuation = 1.0 - smoothstep(0.0, uLightRadius, distanceToLight);
+    float diffuse = max(dot(normal, lightDirection), 0.0);
+    vec3 directLight = uLightColor * (uLightIntensity * attenuation * diffuse);
+    vec3 ambientColor = color * uAmbient;
+    if (uLightBlendMode < 0.5) color = color * (vec3(uAmbient) + directLight);
+    else if (uLightBlendMode < 1.5) color = ambientColor + directLight;
+    else color = vec3(1.0) - (vec3(1.0) - clamp(ambientColor, 0.0, 1.0)) *
+      (vec3(1.0) - clamp(directLight, 0.0, 1.0));
+  }
   float finalAlpha = alpha * vColor.a;
   finalColor = vec4(color * vColor.rgb * finalAlpha, finalAlpha);
 }`;
@@ -219,13 +294,20 @@ export function terrainTextureOrientationIndex(orientation: TerrainTextureOrient
   return orientationIndex[orientation];
 }
 
+export function terrainTextureFormatIndex(format: TerrainTextureFormat): number {
+  return format === 'albedo-normal-horizontal' ? 1 : 0;
+}
+
 function normalizedColor(color: TerrainVisualColor): Float32Array {
   return new Float32Array(color.map((component) => component / 255));
 }
 
 export interface TerrainChunkMeshOptions {
   readonly fieldTexture: Texture;
+  readonly soilTexture: Texture;
   readonly rockTexture: Texture;
+  readonly rockAlphaTexture: Texture | null;
+  readonly rockTextureFormat: TerrainTextureFormat;
   readonly chunkOriginMeters: readonly [number, number];
   readonly chunkSizeMeters: readonly [number, number];
   readonly fieldSize: readonly [number, number];
@@ -240,6 +322,11 @@ export class TerrainChunkMesh {
   private readonly shader: Shader;
   private readonly uniforms: UniformGroup;
   private rockTexture: Texture;
+  private soilTexture: Texture;
+  private rockAlphaTexture: Texture | null;
+  private rockTextureFormat: TerrainTextureFormat;
+  private materialMaps: MaterialMaps | null = null;
+  private lighting: TerrainLightingSettings | null = null;
   private smoothing: TerrainSmoothingSettings;
   private orientation: TerrainTextureOrientation;
 
@@ -251,13 +338,21 @@ export class TerrainChunkMesh {
       uvs: new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]),
       indices: new Uint32Array([0, 1, 2, 0, 2, 3]),
     });
+    const rockPixelWidth =
+      options.rockTexture.source.pixelWidth /
+      (options.rockTextureFormat === 'albedo-normal-horizontal' ? 2 : 1);
     const tileSize = terrainTextureWorldSize(
-      options.rockTexture.source.pixelWidth,
+      rockPixelWidth,
       options.rockTexture.source.pixelHeight,
       terrainMaterialVisuals[TerrainMaterialId.Rock].texture?.tileWidthMeters,
     );
     const soil = terrainMaterialVisuals[TerrainMaterialId.Soil];
     const rock = terrainMaterialVisuals[TerrainMaterialId.Rock];
+    const soilTileSize = terrainTextureWorldSize(
+      options.soilTexture.source.pixelWidth,
+      options.soilTexture.source.pixelHeight,
+      soil.texture?.tileWidthMeters,
+    );
     this.uniforms = new UniformGroup({
       uChunkOrigin: {
         value: new Float32Array(options.chunkOriginMeters),
@@ -289,18 +384,41 @@ export class TerrainChunkMesh {
         type: 'f32',
       },
       uRockTileSize: { value: new Float32Array(tileSize), type: 'vec2<f32>' },
+      uSoilTileSize: { value: new Float32Array(soilTileSize), type: 'vec2<f32>' },
       uRockOpacity: {
         value: options.rockTexture === Texture.WHITE ? 0 : (rock.texture?.opacity ?? 0),
         type: 'f32',
       },
+      uSoilOpacity: {
+        value: options.soilTexture === Texture.WHITE ? 0 : (soil.texture?.opacity ?? 0),
+        type: 'f32',
+      },
+      uRockTextureFormat: {
+        value: terrainTextureFormatIndex(options.rockTextureFormat),
+        type: 'f32',
+      },
+      uRockAlphaReady: { value: options.rockAlphaTexture ? 1 : 0, type: 'f32' },
       uSoilBody: { value: normalizedColor(soil.body), type: 'vec3<f32>' },
       uSoilSurface: { value: normalizedColor(soil.surface), type: 'vec3<f32>' },
       uSoilEdge: { value: normalizedColor(soil.edge), type: 'vec3<f32>' },
       uRockBody: { value: normalizedColor(rock.body), type: 'vec3<f32>' },
       uRockSurface: { value: normalizedColor(rock.surface), type: 'vec3<f32>' },
       uRockEdge: { value: normalizedColor(rock.edge), type: 'vec3<f32>' },
+      uLightPosition: { value: new Float32Array([-1000, -1000]), type: 'vec2<f32>' },
+      uLightIntensity: { value: 1.2, type: 'f32' },
+      uLightRadius: { value: 24, type: 'f32' },
+      uNormalStrength: { value: 1, type: 'f32' },
+      uAmbient: { value: 0.48, type: 'f32' },
+      uLightColor: { value: new Float32Array([1, 1, 1]), type: 'vec3<f32>' },
+      uLightBlendMode: { value: 0, type: 'f32' },
+      uLightingEnabled: { value: 0, type: 'f32' },
+      uMaterialMapsReady: { value: 0, type: 'f32' },
+      uDisplayMode: { value: 0, type: 'f32' },
     });
     this.rockTexture = options.rockTexture;
+    this.soilTexture = options.soilTexture;
+    this.rockAlphaTexture = options.rockAlphaTexture;
+    this.rockTextureFormat = options.rockTextureFormat;
     this.smoothing = { ...options.smoothing };
     this.orientation = options.orientation;
     this.shader = new Shader({
@@ -308,8 +426,16 @@ export class TerrainChunkMesh {
       resources: {
         uField: options.fieldTexture.source,
         uFieldSampler: options.fieldTexture.source.style,
+        uSoilTexture: options.soilTexture.source,
+        uSoilSampler: options.soilTexture.source.style,
         uRockTexture: options.rockTexture.source,
         uRockSampler: options.rockTexture.source.style,
+        uRockAlphaTexture: (options.rockAlphaTexture ?? Texture.WHITE).source,
+        uRockAlphaSampler: (options.rockAlphaTexture ?? Texture.WHITE).source.style,
+        uHeightMap: Texture.WHITE.source,
+        uHeightSampler: Texture.WHITE.source.style,
+        uNormalMap: Texture.WHITE.source,
+        uNormalSampler: Texture.WHITE.source.style,
         terrainUniforms: this.uniforms,
       },
     });
@@ -327,14 +453,15 @@ export class TerrainChunkMesh {
     this.uniforms.uniforms.uTextureOrientation = terrainTextureOrientationIndex(orientation);
   }
 
-  setRockTexture(texture: Texture): void {
-    if (texture === this.rockTexture) return;
+  setRockTexture(texture: Texture, format: TerrainTextureFormat): void {
+    if (texture === this.rockTexture && format === this.rockTextureFormat) return;
     this.rockTexture = texture;
+    this.rockTextureFormat = format;
     this.shader.resources.uRockTexture = texture.source;
     this.shader.resources.uRockSampler = texture.source.style;
     this.uniforms.uniforms.uRockTileSize = new Float32Array(
       terrainTextureWorldSize(
-        texture.source.pixelWidth,
+        texture.source.pixelWidth / (format === 'albedo-normal-horizontal' ? 2 : 1),
         texture.source.pixelHeight,
         terrainMaterialVisuals[TerrainMaterialId.Rock].texture?.tileWidthMeters,
       ),
@@ -343,6 +470,71 @@ export class TerrainChunkMesh {
       texture === Texture.WHITE
         ? 0
         : (terrainMaterialVisuals[TerrainMaterialId.Rock].texture?.opacity ?? 0);
+    this.uniforms.uniforms.uRockTextureFormat = terrainTextureFormatIndex(format);
+  }
+
+  setSoilTexture(texture: Texture): void {
+    if (texture === this.soilTexture) return;
+    this.soilTexture = texture;
+    this.shader.resources.uSoilTexture = texture.source;
+    this.shader.resources.uSoilSampler = texture.source.style;
+    this.uniforms.uniforms.uSoilTileSize = new Float32Array(
+      terrainTextureWorldSize(
+        texture.source.pixelWidth,
+        texture.source.pixelHeight,
+        terrainMaterialVisuals[TerrainMaterialId.Soil].texture?.tileWidthMeters,
+      ),
+    );
+    this.uniforms.uniforms.uSoilOpacity =
+      texture === Texture.WHITE
+        ? 0
+        : (terrainMaterialVisuals[TerrainMaterialId.Soil].texture?.opacity ?? 0);
+  }
+
+  setRockAlphaTexture(texture: Texture | null): void {
+    if (texture === this.rockAlphaTexture) return;
+    this.rockAlphaTexture = texture;
+    const source = texture ?? Texture.WHITE;
+    this.shader.resources.uRockAlphaTexture = source.source;
+    this.shader.resources.uRockAlphaSampler = source.source.style;
+    this.uniforms.uniforms.uRockAlphaReady = texture ? 1 : 0;
+  }
+
+  setMaterialMaps(maps: MaterialMaps | null): void {
+    if (this.materialMaps === maps) return;
+    this.materialMaps = maps;
+    const height = maps?.height ?? Texture.WHITE;
+    const normal = maps?.normal ?? Texture.WHITE;
+    this.shader.resources.uHeightMap = height.source;
+    this.shader.resources.uHeightSampler = height.source.style;
+    this.shader.resources.uNormalMap = normal.source;
+    this.shader.resources.uNormalSampler = normal.source.style;
+    this.uniforms.uniforms.uMaterialMapsReady = maps ? 1 : 0;
+  }
+
+  setLighting(settings: TerrainLightingSettings): void {
+    this.lighting = settings;
+    this.uniforms.uniforms.uLightPosition = new Float32Array(settings.position);
+    this.uniforms.uniforms.uLightIntensity = settings.intensity;
+    this.uniforms.uniforms.uLightRadius = Math.max(0.001, settings.radius);
+    this.uniforms.uniforms.uNormalStrength = settings.normalStrength;
+    this.uniforms.uniforms.uAmbient = settings.ambient;
+    this.uniforms.uniforms.uLightColor = new Float32Array([
+      ((settings.color >> 16) & 0xff) / 255,
+      ((settings.color >> 8) & 0xff) / 255,
+      (settings.color & 0xff) / 255,
+    ]);
+    this.uniforms.uniforms.uLightBlendMode =
+      settings.blendMode === 'add' ? 1 : settings.blendMode === 'screen' ? 2 : 0;
+    this.uniforms.uniforms.uLightingEnabled = settings.enabled ? 1 : 0;
+    this.uniforms.uniforms.uDisplayMode =
+      settings.display === 'albedo'
+        ? 1
+        : settings.display === 'height'
+          ? 2
+          : settings.display === 'normal'
+            ? 3
+            : 0;
   }
 
   setDisplayRect(x: number, y: number, width: number, height: number): void {
@@ -361,15 +553,24 @@ export class TerrainChunkMesh {
   createInstance(): TerrainChunkMesh {
     const instance = new TerrainChunkMesh({
       ...this.options,
+      soilTexture: this.soilTexture,
       rockTexture: this.rockTexture,
+      rockAlphaTexture: this.rockAlphaTexture,
+      rockTextureFormat: this.rockTextureFormat,
       smoothing: this.smoothing,
       orientation: this.orientation,
     });
+    instance.setMaterialMaps(this.materialMaps);
+    if (this.lighting) instance.setLighting(this.lighting);
     return instance;
   }
 
   syncMaterialFrom(source: TerrainChunkMesh): void {
-    this.setRockTexture(source.rockTexture);
+    this.setSoilTexture(source.soilTexture);
+    this.setRockTexture(source.rockTexture, source.rockTextureFormat);
+    this.setRockAlphaTexture(source.rockAlphaTexture);
+    this.setMaterialMaps(source.materialMaps);
+    if (source.lighting) this.setLighting(source.lighting);
     this.setSettings(source.smoothing, source.orientation);
   }
 

@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type { NumericSetting } from '../game/config/GameConfig';
 import { withDamagePopupCurve, withSetting } from '../game/config/defaultGameConfig';
 import type { GameRuntime } from '../game/core/GameRuntime';
@@ -9,33 +9,38 @@ import {
   withExplosionToggle,
   type WeaponNumericSetting,
 } from '../game/weapons/WeaponSettings';
-import { defaultDebugOptions, type DebugOptions } from '../game/rendering/DebugOptions';
+import type { DebugOptions } from '../game/rendering/DebugOptions';
 import { GameCanvas } from '../game/rendering/GameCanvas';
 import { FlightTelemetry, HUD, SceneStatus } from '../ui/HUD/HUD';
 import { TechnicalPanel } from '../ui/TechnicalPanel/TechnicalPanel';
 import './App.css';
 import { RtsController } from '../game/client/RtsController';
 import { SelectionPanel } from '../ui/SelectionPanel/SelectionPanel';
-import { createShaderSettings } from '../game/rendering/ShaderSettings';
-import { defaultTerrainSmoothingSettings } from '../game/rendering/TerrainSmoothingSettings';
-import { defaultTerrainTextureSettings } from '../game/rendering/TerrainTextureSettings';
 import { AnimationSandbox } from '../ui/AnimationSandbox/AnimationSandbox';
 import { createDefaultBuildingAnimationConfig } from '../game/buildings/BuildingAnimationConfig';
 import type { BuildingAnimationPreview } from '../game/buildings/BuildingAnimationPreview';
+import { createDefaultAppSettings, saveAppSettings, type AppSettings } from './AppSettings';
 
-export function App({ runtime }: { runtime: GameRuntime }) {
+export function App({
+  runtime,
+  initialSettings,
+}: {
+  runtime: GameRuntime;
+  initialSettings: AppSettings;
+}) {
   const [activeView, setActiveView] = useState<'game' | 'animation'>('game');
-  const [controls] = useState(() => new RtsController(runtime));
+  const [controls] = useState(() => {
+    const controller = new RtsController(runtime);
+    controller.camera.setZoom(initialSettings.cameraZoom);
+    return controller;
+  });
   const [config, setConfig] = useState(() => runtime.getConfig());
   const [paused, setPaused] = useState(runtime.isPaused());
-  const [debug, setDebug] = useState<DebugOptions>({ ...defaultDebugOptions });
-  const [shaders, setShaders] = useState(createShaderSettings);
-  const [terrainSmoothing, setTerrainSmoothing] = useState(() => ({
-    ...defaultTerrainSmoothingSettings,
-  }));
-  const [terrainTexture, setTerrainTexture] = useState(() => ({
-    ...defaultTerrainTextureSettings,
-  }));
+  const [debug, setDebug] = useState<DebugOptions>(() => ({ ...initialSettings.debug }));
+  const [shaders, setShaders] = useState(() => initialSettings.shaders);
+  const [terrainSmoothing, setTerrainSmoothing] = useState(() => initialSettings.terrainSmoothing);
+  const [terrainTexture, setTerrainTexture] = useState(() => initialSettings.terrainTexture);
+  const [savedCameraZoom, setSavedCameraZoom] = useState(initialSettings.cameraZoom);
   const [buildingPreview, setBuildingPreview] = useState<BuildingAnimationPreview>(() => ({
     config: createDefaultBuildingAnimationConfig(),
     progress: 0,
@@ -47,6 +52,28 @@ export function App({ runtime }: { runtime: GameRuntime }) {
     opacity: 1,
     showHitbox: true,
   }));
+  useEffect(() => {
+    runtime.recordCollisionSamples = debug.samples;
+    runtime.recordPenetrationPaths = debug.penetration;
+  }, [debug.penetration, debug.samples, runtime]);
+  useEffect(
+    () => controls.camera.subscribe(() => setSavedCameraZoom(controls.camera.getZoom())),
+    [controls],
+  );
+  useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      void saveAppSettings({
+        version: 1,
+        gameConfig: config,
+        debug,
+        shaders,
+        terrainSmoothing,
+        terrainTexture,
+        cameraZoom: savedCameraZoom,
+      }).catch(() => undefined);
+    }, 200);
+    return () => window.clearTimeout(timeout);
+  }, [config, debug, savedCameraZoom, shaders, terrainSmoothing, terrainTexture]);
   const togglePause = useCallback(() => {
     runtime.setPaused(!runtime.isPaused());
     setPaused(runtime.isPaused());
@@ -272,11 +299,13 @@ export function App({ runtime }: { runtime: GameRuntime }) {
             onStep={() => runtime.step()}
             onReset={resetScene}
             onResetSettings={() => {
-              setConfig(runtime.resetSettings());
-              setShaders(createShaderSettings());
-              setTerrainSmoothing({ ...defaultTerrainSmoothingSettings });
-              setTerrainTexture({ ...defaultTerrainTextureSettings });
-              controls.camera.setZoom(1);
+              const defaults = createDefaultAppSettings();
+              setConfig(runtime.updateConfig(defaults.gameConfig));
+              setDebug(defaults.debug);
+              setShaders(defaults.shaders);
+              setTerrainSmoothing(defaults.terrainSmoothing);
+              setTerrainTexture(defaults.terrainTexture);
+              controls.camera.setZoom(defaults.cameraZoom);
             }}
           />
         </main>

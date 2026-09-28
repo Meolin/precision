@@ -11,6 +11,8 @@ import type { RtsController } from '../client/RtsController';
 import cannonBaseUrl from '../assets/example_base.png';
 import { ScenePostProcessing } from './ScenePostProcessing';
 import type { ShaderSettings } from './ShaderSettings';
+import { shaderValue } from './ShaderSettings';
+import type { TerrainLightingBlendMode, TerrainLightingDisplay } from './TerrainLightingSettings';
 import { MinimapRenderer } from './MinimapRenderer';
 import type { TerrainSmoothingSettings } from './TerrainSmoothingSettings';
 import type { TerrainTextureSettings } from './TerrainTextureSettings';
@@ -141,6 +143,20 @@ export class SceneRenderer {
     this.world.scale.set(ppm);
     if (state.terrain !== this.terrainIdentity) this.minimap.clearTerrain();
     this.terrain.update(state.terrain, terrainSmoothing, terrainTexture, ppm);
+    const cursorLight = runtime.getCursorPosition();
+    const displayModes: readonly TerrainLightingDisplay[] = ['final', 'albedo', 'height', 'normal'];
+    const blendModes: readonly TerrainLightingBlendMode[] = ['multiply', 'add', 'screen'];
+    this.terrain.setLighting({
+      enabled: shaders.enabled && shaders.effects.terrainLighting.enabled,
+      intensity: shaderValue(shaders, 'terrainLighting', 'intensity'),
+      radius: shaderValue(shaders, 'terrainLighting', 'radius'),
+      normalStrength: shaderValue(shaders, 'terrainLighting', 'normalStrength'),
+      ambient: shaderValue(shaders, 'terrainLighting', 'ambient'),
+      color: shaderValue(shaders, 'terrainLighting', 'lightColor'),
+      blendMode: blendModes[shaderValue(shaders, 'terrainLighting', 'blendMode')] ?? 'multiply',
+      display: displayModes[shaderValue(shaders, 'terrainLighting', 'display')] ?? 'final',
+      position: cursorLight ? [cursorLight.x, cursorLight.y] : [-1000, -1000],
+    });
     this.drawFallingTerrain(
       state.fallingTerrain,
       state.terrain.cellSizeMeters,

@@ -31,7 +31,9 @@ import {
 } from '../../game/rendering/TerrainSmoothingSettings';
 import {
   defaultTerrainTextureSettings,
+  isTerrainRockTextureId,
   isTerrainTextureOrientation,
+  terrainRockTextureAssets,
   type TerrainTextureSettings,
 } from '../../game/rendering/TerrainTextureSettings';
 
@@ -484,6 +486,31 @@ export function TechnicalPanel({
         </CollapsibleSettingsGroup>
         <CollapsibleSettingsGroup title="Текстуры рельефа" meta="ROCK" ariaLabel="Текстуры рельефа">
           <div className="select-row">
+            <label htmlFor="terrain-soil-texture">Текстура земли</label>
+            <select id="terrain-soil-texture" value="soil_1" disabled>
+              <option value="soil_1">Soil 1</option>
+            </select>
+          </div>
+          <div className="select-row">
+            <label htmlFor="terrain-rock-texture">Текстура камня</label>
+            <select
+              id="terrain-rock-texture"
+              value={terrainTexture.rockTextureId}
+              onChange={(event) => {
+                const rockTextureId = event.target.value;
+                if (isTerrainRockTextureId(rockTextureId))
+                  onTerrainTexture({ ...terrainTexture, rockTextureId });
+              }}
+            >
+              {terrainRockTextureAssets.map((asset) => (
+                <option key={asset.id} value={asset.id}>
+                  {asset.label}
+                  {asset.format === 'albedo-normal-horizontal' ? ' · Color + Normal' : ''}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="select-row">
             <label htmlFor="terrain-texture-orientation">Ориентация</label>
             <select
               id="terrain-texture-orientation"
@@ -501,7 +528,8 @@ export function TechnicalPanel({
             </select>
           </div>
           <p className="settings-note">
-            Меняет раскладку текстуры Rock. Рандомная ориентация стабильна для каждой плитки.
+            Soil использует soil_1. Камень поддерживает обычные изображения и формат 2:1: цвет
+            слева, normal map справа. Рандомная ориентация стабильна для каждой плитки.
           </p>
           <button
             className="shader-reset"

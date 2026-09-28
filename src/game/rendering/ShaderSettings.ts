@@ -1,4 +1,5 @@
 export type ShaderId =
+  | 'terrainLighting'
   | 'color'
   | 'noise'
   | 'blur'
@@ -51,6 +52,22 @@ const color = (key: string, label: string, initial: number): ShaderControl => ({
 });
 
 export const shaderDefinitions: readonly ShaderDefinition[] = [
+  {
+    id: 'terrainLighting',
+    title: 'Динамический свет камня',
+    enabled: true,
+    description:
+      'Источник следует за курсором. Карты высот и нормалей создаются один раз для выбранной текстуры.',
+    controls: [
+      number('intensity', 'Интенсивность', 0, 3, 0.05, 1.2),
+      number('radius', 'Радиус', 2, 80, 1, 24, 'm'),
+      number('normalStrength', 'Выраженность нормалей', 0, 3, 0.05, 1),
+      number('ambient', 'Фоновый свет', 0, 1, 0.05, 0.48),
+      color('lightColor', 'Цвет источника', 0xffffff),
+      number('blendMode', 'Режим наложения', 0, 2, 1, 0),
+      number('display', 'Режим', 0, 3, 1, 0),
+    ],
+  },
   {
     id: 'bevel',
     title: 'Объём краёв',

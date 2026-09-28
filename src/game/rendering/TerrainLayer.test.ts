@@ -106,7 +106,11 @@ describe('TerrainLayer async field queue', () => {
     worker.complete(worker.requests[0]!);
     const mesh = layer.getVisualChunks()[0]?.mesh;
     expect(mesh).toBeDefined();
-    layer.update(terrain, { enabled: false, quality: 1 }, { orientation: 'random' });
+    layer.update(
+      terrain,
+      { enabled: false, quality: 1 },
+      { rockTextureId: 'Stone_example2', orientation: 'random' },
+    );
     expect(worker.requests).toHaveLength(1);
     expect(layer.getVisualChunks()[0]?.mesh).toBe(mesh);
     layer.destroy();

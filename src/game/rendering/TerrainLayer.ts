@@ -3,8 +3,17 @@ import type { TerrainRect } from '../terrain/TerrainChunk';
 import { unionTerrainRect } from '../terrain/TerrainChunk';
 import type { TerrainGrid } from '../terrain/TerrainGrid';
 import { TerrainChunkMesh } from './TerrainChunkMesh';
+import { MaterialMapCache, type MaterialMaps } from './MaterialMaps';
+import type { TerrainLightingSettings } from './TerrainLightingSettings';
 import type { TerrainSmoothingSettings } from './TerrainSmoothingSettings';
-import type { TerrainTextureSettings } from './TerrainTextureSettings';
+import {
+  defaultTerrainTextureSettings,
+  terrainRockTextureAsset,
+  terrainSoilTextureAsset,
+  type TerrainRockTextureId,
+  type TerrainTextureFormat,
+  type TerrainTextureSettings,
+} from './TerrainTextureSettings';
 import { terrainMaterialVisuals } from './terrainMaterialVisuals';
 import { TerrainMaterialId } from '../terrain/TerrainMaterialId';
 import {
@@ -37,7 +46,9 @@ export interface TerrainVisualChunk {
   readonly chunkRow: number;
   readonly mesh: TerrainChunkMesh;
   readonly fieldTexture: Texture;
+  soilTexture: Texture;
   rockTexture: Texture;
+  rockAlphaTexture: Texture | null;
 }
 
 export interface TerrainVisualMetrics {
@@ -59,6 +70,11 @@ const rockVisual =
   terrainMaterialVisuals[TerrainMaterialId.Rock].texture ??
   (() => {
     throw new Error('Rock material texture metadata is missing.');
+  })();
+const soilVisual =
+  terrainMaterialVisuals[TerrainMaterialId.Soil].texture ??
+  (() => {
+    throw new Error('Soil material texture metadata is missing.');
   })();
 const maxWorkerRetries = 2;
 
@@ -82,7 +98,17 @@ export class TerrainLayer {
   private generation = 0;
   private settings: TerrainSmoothingSettings | null = null;
   private textureSettings: TerrainTextureSettings | null = null;
+  private soilTexture = Texture.WHITE;
   private rockTexture = Texture.WHITE;
+  private rockAlphaTexture: Texture | null = null;
+  private rockTextureFormat: TerrainTextureFormat = terrainRockTextureAsset(
+    defaultTerrainTextureSettings.rockTextureId,
+  ).format;
+  private readonly materialMapCache = new MaterialMapCache();
+  private materialMaps: MaterialMaps | null = null;
+  private lighting: TerrainLightingSettings | null = null;
+  private rockTextureId: TerrainRockTextureId = defaultTerrainTextureSettings.rockTextureId;
+  private rockTextureLoadRevision = 0;
   private lastScheduledVersion = -1;
   private inFlight: InFlightRequest | null = null;
   private pendingPresentation: number[] = [];
@@ -93,7 +119,8 @@ export class TerrainLayer {
   constructor(
     createWorker: () => Worker = () =>
       new Worker(new URL('./terrainRaster.worker.ts', import.meta.url), { type: 'module' }),
-    loadRockTexture: () => Promise<Texture> = () => Assets.load<Texture>(rockVisual.assetUrl),
+    private readonly loadTextureAsset: (assetUrl: string) => Promise<Texture> = (assetUrl) =>
+      Assets.load<Texture>(assetUrl),
   ) {
     this.worker = createWorker();
     this.worker.onmessage = (event: MessageEvent<TerrainRasterResponse>) => {
@@ -122,7 +149,8 @@ export class TerrainLayer {
       else console.error(`Terrain field worker failed: ${event.message}`);
       this.requestNext();
     };
-    void this.loadRockTexture(loadRockTexture);
+    void this.loadSoilTexture();
+    void this.loadRockTexture(this.rockTextureId);
   }
 
   update(
@@ -135,6 +163,12 @@ export class TerrainLayer {
     this.settings = { ...settings };
     this.textureSettings = { ...textureSettings };
     this.pixelsPerMeter = pixelsPerMeter;
+    if (textureSettings.rockTextureId !== this.rockTextureId) {
+      this.rockTextureId = textureSettings.rockTextureId;
+      this.materialMaps = null;
+      this.rockAlphaTexture = null;
+      void this.loadRockTexture(textureSettings.rockTextureId);
+    }
     if (replaced) {
       this.terrain = terrain;
       this.generation++;
@@ -169,14 +203,25 @@ export class TerrainLayer {
     for (const visual of this.visuals.values()) {
       visual.mesh.setSettings(settings, textureSettings.orientation);
       visual.mesh.setPixelsPerMeter(pixelsPerMeter);
-      visual.mesh.setRockTexture(this.rockTexture);
+      visual.mesh.setSoilTexture(this.soilTexture);
+      visual.mesh.setRockTexture(this.rockTexture, this.rockTextureFormat);
+      visual.mesh.setRockAlphaTexture(this.rockAlphaTexture);
+      visual.mesh.setMaterialMaps(this.materialMaps);
+      if (this.lighting) visual.mesh.setLighting(this.lighting);
+      visual.soilTexture = this.soilTexture;
       visual.rockTexture = this.rockTexture;
+      visual.rockAlphaTexture = this.rockAlphaTexture;
     }
     this.requestNext();
   }
 
   getVisualChunks(): readonly TerrainVisualChunk[] {
     return [...this.visuals.values()];
+  }
+
+  setLighting(settings: TerrainLightingSettings): void {
+    this.lighting = settings;
+    for (const visual of this.visuals.values()) visual.mesh.setLighting(settings);
   }
 
   /** Called from Pixi's post-render runner after fields published this frame are visible. */
@@ -188,26 +233,88 @@ export class TerrainLayer {
     if (queuedAtMs !== undefined) this.metrics.visualLatencyMs = renderedAtMs - queuedAtMs;
   }
 
-  private async loadRockTexture(loadTexture: () => Promise<Texture>): Promise<void> {
+  private async loadRockTexture(textureId: TerrainRockTextureId): Promise<void> {
+    const revision = ++this.rockTextureLoadRevision;
     try {
-      const texture = await loadTexture();
-      if (this.disposed) return;
-      texture.source.scaleMode = 'linear';
-      texture.source.mipmapFilter = 'linear';
-      texture.source.autoGenerateMipmaps = rockVisual.mipmaps;
-      texture.source.maxAnisotropy = rockVisual.anisotropy;
-      texture.source.addressMode = 'repeat';
-      texture.source.update();
+      const asset = terrainRockTextureAsset(textureId);
+      const [texture, alphaTexture] = await Promise.all([
+        asset.format === 'albedo-normal-horizontal'
+          ? this.loadCombinedAlbedoTexture(asset.assetUrl)
+          : this.loadTextureAsset(asset.assetUrl),
+        asset.alphaAssetUrl ? this.loadTextureAsset(asset.alphaAssetUrl) : Promise.resolve(null),
+      ]);
+      if (this.disposed || revision !== this.rockTextureLoadRevision) return;
+      this.configureMaterialTexture(texture, rockVisual);
+      if (alphaTexture) this.configureMaterialTexture(alphaTexture, rockVisual);
       this.rockTexture = texture;
+      this.rockAlphaTexture = alphaTexture;
+      // Combined sources are split before upload, so the GPU texture contains albedo only.
+      this.rockTextureFormat = 'albedo';
       for (const visual of this.visuals.values()) {
         visual.rockTexture = texture;
-        visual.mesh.setRockTexture(texture);
+        visual.rockAlphaTexture = alphaTexture;
+        visual.mesh.setRockTexture(texture, this.rockTextureFormat);
+        visual.mesh.setRockAlphaTexture(alphaTexture);
       }
+      void this.materialMapCache.get(textureId).then(
+        (maps) => {
+          if (this.disposed || revision !== this.rockTextureLoadRevision) return;
+          this.materialMaps = maps;
+          for (const visual of this.visuals.values()) visual.mesh.setMaterialMaps(maps);
+        },
+        (error: unknown) =>
+          console.warn(`Material maps for ${textureId} could not be generated: ${String(error)}`),
+      );
     } catch (error) {
+      if (this.disposed || revision !== this.rockTextureLoadRevision) return;
       console.warn(
-        `Rock texture could not be loaded; using the material colour fallback. ${error instanceof Error ? error.message : String(error)}`,
+        `Rock texture ${textureId} could not be loaded; keeping the previous texture. ${error instanceof Error ? error.message : String(error)}`,
       );
     }
+  }
+
+  private async loadCombinedAlbedoTexture(assetUrl: string): Promise<Texture> {
+    const image = new Image();
+    image.src = assetUrl;
+    await image.decode();
+    if (image.naturalWidth !== image.naturalHeight * 2)
+      throw new Error(
+        `Combined terrain texture must have a 2:1 aspect ratio, received ${image.naturalWidth}×${image.naturalHeight}.`,
+      );
+    const canvas = document.createElement('canvas');
+    canvas.width = image.naturalWidth / 2;
+    canvas.height = image.naturalHeight;
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('Canvas 2D is unavailable for combined terrain texture.');
+    context.drawImage(image, 0, 0, canvas.width, canvas.height, 0, 0, canvas.width, canvas.height);
+    return Texture.from(canvas, true);
+  }
+
+  private async loadSoilTexture(): Promise<void> {
+    try {
+      const texture = await this.loadTextureAsset(terrainSoilTextureAsset.assetUrl);
+      if (this.disposed) return;
+      this.configureMaterialTexture(texture, soilVisual);
+      this.soilTexture = texture;
+      for (const visual of this.visuals.values()) {
+        visual.soilTexture = texture;
+        visual.mesh.setSoilTexture(texture);
+      }
+    } catch (error) {
+      if (this.disposed) return;
+      console.warn(
+        `Soil texture could not be loaded; using the material colour fallback. ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  private configureMaterialTexture(texture: Texture, visual: typeof rockVisual): void {
+    texture.source.scaleMode = 'linear';
+    texture.source.mipmapFilter = 'linear';
+    texture.source.autoGenerateMipmaps = visual.mipmaps;
+    texture.source.maxAnisotropy = visual.anisotropy;
+    texture.source.addressMode = 'repeat';
+    texture.source.update();
   }
 
   private enqueueGlobalRect(rect: TerrainRect, queuedAtMs: number): void {
@@ -360,7 +467,10 @@ export class TerrainLayer {
       const fieldTexture = new Texture({ source, label: `terrain-field-${key}` });
       const mesh = new TerrainChunkMesh({
         fieldTexture,
+        soilTexture: this.soilTexture,
         rockTexture: this.rockTexture,
+        rockAlphaTexture: this.rockAlphaTexture,
+        rockTextureFormat: this.rockTextureFormat,
         chunkOriginMeters: [
           chunk.originX * terrain.cellSizeMeters,
           chunk.originY * terrain.cellSizeMeters,
@@ -374,12 +484,16 @@ export class TerrainLayer {
         orientation: textureSettings.orientation,
       });
       mesh.setPixelsPerMeter(this.pixelsPerMeter);
+      mesh.setMaterialMaps(this.materialMaps);
+      if (this.lighting) mesh.setLighting(this.lighting);
       visual = {
         chunkColumn: chunk.id.column,
         chunkRow: chunk.id.row,
         mesh,
         fieldTexture,
+        soilTexture: this.soilTexture,
         rockTexture: this.rockTexture,
+        rockAlphaTexture: this.rockAlphaTexture,
       };
       this.visuals.set(key, visual);
       this.container.addChild(mesh.view);
@@ -415,6 +529,7 @@ export class TerrainLayer {
     this.inFlight = null;
     this.pendingPresentation = [];
     this.clearVisuals();
+    this.materialMapCache.destroy();
     this.container.destroy();
   }
 }

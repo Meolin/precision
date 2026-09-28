@@ -115,7 +115,28 @@ export function ShaderControls({
               <div className="numeric-control" key={control.key}>
                 <div className="numeric-row">
                   <label htmlFor={id}>{control.label}</label>
-                  {control.color ? (
+                  {effect.id === 'terrainLighting' && control.key === 'display' ? (
+                    <select
+                      id={id}
+                      value={value}
+                      onChange={(event) => update(Number(event.target.value))}
+                    >
+                      <option value={0}>Итоговое изображение</option>
+                      <option value={1}>Исходная текстура</option>
+                      <option value={2}>Height Map</option>
+                      <option value={3}>Normal Map</option>
+                    </select>
+                  ) : effect.id === 'terrainLighting' && control.key === 'blendMode' ? (
+                    <select
+                      id={id}
+                      value={value}
+                      onChange={(event) => update(Number(event.target.value))}
+                    >
+                      <option value={0}>Умножение</option>
+                      <option value={1}>Сложение</option>
+                      <option value={2}>Экран</option>
+                    </select>
+                  ) : control.color ? (
                     <input
                       className="shader-color"
                       id={id}
@@ -135,18 +156,22 @@ export function ShaderControls({
                     </div>
                   )}
                 </div>
-                {!control.color && (
-                  <input
-                    className="value-slider"
-                    type="range"
-                    aria-label={`${effect.title}: ${control.label}`}
-                    min={control.min}
-                    max={control.max}
-                    step={control.step}
-                    value={value}
-                    onChange={(event) => update(event.currentTarget.valueAsNumber)}
-                  />
-                )}
+                {!control.color &&
+                  !(
+                    effect.id === 'terrainLighting' &&
+                    (control.key === 'display' || control.key === 'blendMode')
+                  ) && (
+                    <input
+                      className="value-slider"
+                      type="range"
+                      aria-label={`${effect.title}: ${control.label}`}
+                      min={control.min}
+                      max={control.max}
+                      step={control.step}
+                      value={value}
+                      onChange={(event) => update(event.currentTarget.valueAsNumber)}
+                    />
+                  )}
               </div>
             );
           })}

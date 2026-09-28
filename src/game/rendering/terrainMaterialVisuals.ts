@@ -22,7 +22,18 @@ export interface TerrainMaterialVisual {
 export const terrainMaterialVisuals: Readonly<
   Record<SolidTerrainMaterialId, TerrainMaterialVisual>
 > = {
-  [TerrainMaterialId.Soil]: { body: [61, 53, 42], edge: [133, 147, 113], surface: [79, 76, 57] },
+  [TerrainMaterialId.Soil]: {
+    body: [61, 53, 42],
+    edge: [133, 147, 113],
+    surface: [79, 76, 57],
+    texture: {
+      assetUrl: '/Textures/Environment/soil_1.png',
+      tileWidthMeters: 19.2,
+      opacity: 0.82,
+      mipmaps: true,
+      anisotropy: 4,
+    },
+  },
   [TerrainMaterialId.Rock]: {
     body: [52, 60, 68],
     edge: [125, 138, 147],
