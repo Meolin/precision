@@ -377,8 +377,8 @@
 }
 .sandbox-grid {
   display: grid;
-  /* Preserve preview width: 1720px shell - 68px padding - 320px inspector - 16px gap. */
-  grid-template-columns: 230px minmax(0, 1fr) 340px;
+  /* Share extra width with the side panels while keeping the preview usable. */
+  grid-template-columns: minmax(230px, 1fr) minmax(580px, 2.6fr) minmax(340px, 1.4fr);
   grid-template-rows: minmax(160px, 1fr) 10px minmax(240px, var(--timeline-height, 330px));
   flex: 1 1 auto;
   min-height: 0;
