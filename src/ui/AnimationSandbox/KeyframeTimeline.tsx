@@ -1,4 +1,12 @@
-import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type PointerEvent,
+} from 'react';
+import type { AnimationEditorSession } from './AnimationEditorSession';
 import {
   buildingAnimationTrackProperties,
   type BuildingAnimationConfig,
@@ -11,8 +19,39 @@ import {
   defaultTrackValue,
   sampleBuildingTrack,
 } from '../../game/buildings/BuildingAnimationKeyframes';
+import { NumericInput } from './EditorInput';
+import {
+  animationKeyBezier,
+  moveAnimationBezierHandle,
+  moveAnimationGraphPoint,
+  setAnimationKeyInterpolation,
+} from './AnimationGraphEditing';
+import {
+  editAnimationValue,
+  snapAnimationTime as snapTime,
+  constrainAnimationValue as constrainValue,
+  minimumAnimationDuration,
+  resizeAnimationDuration,
+} from './AnimationEditing';
+import {
+  animationEffectParameters,
+  effectParameter,
+  type AnimationEffectProperty,
+  particleTailSeconds,
+  animationLayerEntries,
+  isImageStage,
+  reorderAnimationLayer,
+  stageTrackProperties,
+} from '../../game/buildings/BuildingAnimationEffects';
+import { moveAnimationClip } from './AnimationEffectEditing';
 
 interface Props {
+  session: AnimationEditorSession;
+  animationId: string;
+  zoom: number;
+  onZoom: (zoom: number) => void;
+  linkedScroll?: number;
+  onScroll: (left: number) => void;
   config: BuildingAnimationConfig;
   stage: BuildingAnimationStage | undefined;
   progress: number;
@@ -25,6 +64,15 @@ interface Props {
   onPlaying: (playing: boolean) => void;
   onLoop: (loop: boolean) => void;
   onSpeed: (speed: number) => void;
+  snap: boolean;
+  onSnap: (snap: boolean) => void;
+  autoKey: boolean;
+  onAutoKey: (autoKey: boolean) => void;
+  onRemember: (config?: BuildingAnimationConfig) => void;
+  onUndo: () => void;
+  onRedo: () => void;
+  canUndo: boolean;
+  canRedo: boolean;
 }
 
 type SelectedKey = { stageId: string; property: BuildingAnimationTrackProperty; id: string };
@@ -54,7 +102,7 @@ type LayerDrag = {
   startX: number;
   width: number;
   stageId: string;
-  mode: 'move' | 'trim';
+  mode: 'move' | 'trim' | 'trim-start';
   config: BuildingAnimationConfig;
   recorded: boolean;
 };
@@ -74,6 +122,8 @@ type WorkDrag = {
 };
 type GraphDrag = {
   pointerId: number;
+  startX: number;
+  startY: number;
   left: number;
   top: number;
   width: number;
@@ -88,6 +138,8 @@ type GraphDrag = {
 };
 type HandleDrag = {
   pointerId: number;
+  startX: number;
+  startY: number;
   left: number;
   top: number;
   width: number;
@@ -110,8 +162,19 @@ const propertyGroups: BuildingAnimationTrackProperty[][] = [
   ['opacity'],
   ['skewX', 'skewY'],
   ['pivotX', 'pivotY'],
+  ...Object.keys(animationEffectParameters).map((property) => [
+    property as BuildingAnimationTrackProperty,
+  ]),
 ];
-const groupLabels = ['Position', 'Scale', 'Rotation', 'Opacity', 'Skew', 'Anchor'];
+const groupLabels = [
+  'Position',
+  'Scale',
+  'Rotation',
+  'Opacity',
+  'Skew',
+  'Anchor',
+  ...Object.values(animationEffectParameters).map((parameter) => parameter.label),
+];
 const clamp01 = (value: number) => Math.min(1, Math.max(0, value));
 const propertyLabels: Record<BuildingAnimationTrackProperty, string> = {
   x: 'X Position',
@@ -124,7 +187,13 @@ const propertyLabels: Record<BuildingAnimationTrackProperty, string> = {
   skewY: 'Y Skew',
   pivotX: 'X Anchor',
   pivotY: 'Y Anchor',
-};
+  ...Object.fromEntries(
+    Object.entries(animationEffectParameters).map(([property, parameter]) => [
+      property,
+      parameter.label,
+    ]),
+  ),
+} as Record<BuildingAnimationTrackProperty, string>;
 const interpolationLabels: Record<BuildingKeyInterpolation, string> = {
   step: 'Hold',
   linear: 'Linear',
@@ -134,22 +203,9 @@ const interpolationLabels: Record<BuildingKeyInterpolation, string> = {
   'cubic-bezier': 'Custom Bézier',
 };
 const defaultBezier: [number, number, number, number] = [0.4, 0, 0.2, 1];
-const presetBezier: Record<BuildingKeyInterpolation, [number, number, number, number]> = {
-  step: [0, 0, 1, 1],
-  linear: [1 / 3, 1 / 3, 2 / 3, 2 / 3],
-  'ease-in': [0.5, 0, 1, 1],
-  'ease-out': [0, 0, 0.5, 1],
-  'ease-in-out': [0.5, 0, 0.5, 1],
-  'cubic-bezier': defaultBezier,
-};
 
 function frameStep(config: BuildingAnimationConfig): number {
   return 1 / (config.timeline.durationSeconds * config.timeline.frameRate);
-}
-
-function snapTime(time: number, config: BuildingAnimationConfig, enabled: boolean): number {
-  const step = enabled ? frameStep(config) : 0.0001;
-  return clamp01(Math.round(clamp01(time) / step) * step);
 }
 
 function timecode(progress: number, config: BuildingAnimationConfig): string {
@@ -160,90 +216,34 @@ function timecode(progress: number, config: BuildingAnimationConfig): string {
   return `${two(Math.floor(seconds / 60))}:${two(seconds % 60)}:${two(frame % fps)}`;
 }
 
-function constrainValue(property: BuildingAnimationTrackProperty, value: number): number {
-  if (property === 'opacity') return clamp01(value);
-  if (property === 'scaleX' || property === 'scaleY') return Math.max(0.001, value);
-  return value;
-}
-
 function sameKey(left: SelectedKey, right: SelectedKey): boolean {
   return left.stageId === right.stageId && left.property === right.property && left.id === right.id;
 }
 
-function NumericInput({
-  value,
-  onCommit,
-  onFocus,
-  min,
-  max,
-  step,
-  disabled,
-  label,
-}: {
-  value: number;
-  onCommit: (value: number) => void;
-  onFocus?: () => void;
-  min?: number;
-  max?: number;
-  step?: number;
-  disabled?: boolean;
-  label?: string;
-}) {
-  const [draft, setDraft] = useState(String(value));
-  const [editing, setEditing] = useState(false);
-  const cancelled = useRef(false);
-  useEffect(() => {
-    if (!editing) setDraft(String(value));
-  }, [editing, value]);
-  return (
-    <input
-      aria-label={label}
-      type="number"
-      min={min}
-      max={max}
-      step={step}
-      disabled={disabled}
-      value={editing ? draft : String(value)}
-      onFocus={() => {
-        cancelled.current = false;
-        setDraft(String(value));
-        setEditing(true);
-        onFocus?.();
-      }}
-      onChange={(event) => setDraft(event.target.value)}
-      onBlur={() => {
-        setEditing(false);
-        if (cancelled.current || !draft.trim()) return;
-        const number = Number(draft);
-        if (Number.isFinite(number)) onCommit(number);
-      }}
-      onKeyDown={(event) => {
-        if (event.key === 'Enter') event.currentTarget.blur();
-        if (event.key === 'Escape') {
-          cancelled.current = true;
-          event.currentTarget.blur();
-        }
-      }}
-    />
-  );
-}
-
 export function KeyframeTimeline(props: Props) {
-  const [property, setProperty] = useState<BuildingAnimationTrackProperty>('x');
-  const [selectedKeys, setSelectedKeys] = useState<SelectedKey[]>([]);
-  const [expanded, setExpanded] = useState<string[]>([]);
-  const [animatedOnly, setAnimatedOnly] = useState(false);
-  const [graphMode, setGraphMode] = useState(false);
+  const view = props.session.view(props.animationId);
+  const [property, setProperty] = useState<BuildingAnimationTrackProperty>(view.property);
+  const [selectedKeys, setSelectedKeys] = useState<SelectedKey[]>(view.selectedKeys);
+  const [expanded, setExpanded] = useState<string[]>(view.expanded);
+  const [animatedOnly, setAnimatedOnly] = useState(view.animatedOnly);
+  const [graphMode, setGraphMode] = useState(view.graphMode);
+  const [graphViewport, setGraphViewport] = useState<{
+    stageId: string;
+    property: BuildingAnimationTrackProperty;
+    min: number;
+    range: number;
+  } | null>(null);
   const [renamingStageId, setRenamingStageId] = useState<string | null>(null);
   const [stageNameDraft, setStageNameDraft] = useState('');
   const renameCancelled = useRef(false);
-  const [zoom, setZoom] = useState(1);
-  const [snap, setSnap] = useState(true);
-  const [clipboard, setClipboard] = useState<ClipboardKey[]>([]);
-  const history = useRef<{ undo: BuildingAnimationConfig[]; redo: BuildingAnimationConfig[] }>({
-    undo: [],
-    redo: [],
-  });
+  const { zoom, onZoom: setZoom } = props;
+  const snap = props.snap;
+  const [trackWidth, setTrackWidth] = useState(480);
+  const [clipboard, setClipboardState] = useState<ClipboardKey[]>(props.session.clipboard);
+  const setClipboard = (keys: ClipboardKey[]) => {
+    props.session.clipboard = keys;
+    setClipboardState(keys);
+  };
   const authoredConfig = useRef<BuildingAnimationConfig | null>(null);
   const keyDrag = useRef<KeyDrag | null>(null);
   const markerDrag = useRef<MarkerDrag | null>(null);
@@ -259,19 +259,59 @@ export function KeyframeTimeline(props: Props) {
   const rulerPointer = useRef<number | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const restoredScroll = useRef(false);
+  useLayoutEffect(() => {
+    const element = scrollRef.current;
+    if (!element?.clientWidth || trackWidth !== Math.max(160, element.clientWidth - labelWidth))
+      return;
+    if (!restoredScroll.current) {
+      element.scrollTop = view.scrollTop;
+      element.scrollLeft = props.linkedScroll ?? view.scrollLeft;
+      restoredScroll.current = true;
+    }
+    if (
+      element &&
+      props.linkedScroll !== undefined &&
+      Math.abs(element.scrollLeft - props.linkedScroll) > 1
+    )
+      element.scrollLeft = props.linkedScroll;
+  }, [props.linkedScroll, trackWidth, view]);
+  useEffect(() => {
+    Object.assign(view, { property, selectedKeys, expanded, animatedOnly, graphMode, zoom });
+  }, [view, property, selectedKeys, expanded, animatedOnly, graphMode, zoom]);
+  const lastConfig = useRef(props.config);
   const activeStage = props.stage ?? props.config.stages[0];
   const activeStageId = activeStage?.id;
   useEffect(() => {
+    if (activeStage && !stageTrackProperties(activeStage).includes(property))
+      setProperty(stageTrackProperties(activeStage)[0]!);
+  }, [activeStage, property]);
+  useEffect(() => {
+    if (lastConfig.current === props.config) return;
+    lastConfig.current = props.config;
     if (authoredConfig.current === props.config) {
       authoredConfig.current = null;
       return;
     }
-    history.current = { undo: [], redo: [] };
     setSelectedKeys([]);
+    graphDrag.current = null;
+    handleDrag.current = null;
+    setGraphViewport(null);
   }, [props.config]);
   const duration = props.config.timeline.durationSeconds;
   const fps = props.config.timeline.frameRate;
-  const sheetWidth = labelWidth + 760 * zoom;
+  const sheetWidth = labelWidth + trackWidth * zoom;
+  useEffect(() => {
+    const element = scrollRef.current;
+    if (!element) return;
+    const resize = () => {
+      if (element.clientWidth) setTrackWidth(Math.max(160, element.clientWidth - labelWidth));
+    };
+    resize();
+    const observer = new ResizeObserver(resize);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
 
   const trackFor = (stageId: string, item: BuildingAnimationTrackProperty) =>
     props.config.tracks.find((track) => track.stageId === stageId && track.property === item);
@@ -282,31 +322,26 @@ export function KeyframeTimeline(props: Props) {
   const selectedKey = selectedTrack?.keys.find((key) => key.id === selectedLast?.id);
 
   const remember = (config = props.config) => {
-    history.current.undo.push(structuredClone(config));
-    if (history.current.undo.length > 60) history.current.undo.shift();
-    history.current.redo = [];
+    props.onRemember(config);
   };
   const emitConfig = (config: BuildingAnimationConfig, progress?: number) => {
     authoredConfig.current = config;
     props.onConfig(config, progress);
   };
   const commit = (config: BuildingAnimationConfig, progress?: number) => {
+    finishGraphDrag();
     remember();
     emitConfig(config, progress);
   };
   const undo = () => {
-    const previous = history.current.undo.pop();
-    if (!previous) return;
-    history.current.redo.push(structuredClone(props.config));
+    finishGraphDrag();
     setSelectedKeys([]);
-    emitConfig(previous);
+    props.onUndo();
   };
   const redo = () => {
-    const next = history.current.redo.pop();
-    if (!next) return;
-    history.current.undo.push(structuredClone(props.config));
+    finishGraphDrag();
     setSelectedKeys([]);
-    emitConfig(next);
+    props.onRedo();
   };
 
   const selectStage = (index: number) => {
@@ -324,14 +359,14 @@ export function KeyframeTimeline(props: Props) {
     if (!name || name === props.config.stages.find((stage) => stage.id === stageId)?.name) return;
     const config = structuredClone(props.config);
     const stage = config.stages.find((candidate) => candidate.id === stageId);
-    if (!stage) return;
+    if (!stage || stage.locked) return;
     stage.name = name;
     commit(config);
   };
 
   const addKey = (stageId: string, item: BuildingAnimationTrackProperty, at = props.progress) => {
     const stage = props.config.stages.find((candidate) => candidate.id === stageId);
-    if (!stage) return;
+    if (!stage || stage.locked || !stageTrackProperties(stage).includes(item)) return;
     const time = snapTime(at, props.config, snap);
     const existing = trackFor(stageId, item)?.keys.find(
       (key) => Math.abs(key.time - time) < 0.00001,
@@ -363,6 +398,7 @@ export function KeyframeTimeline(props: Props) {
   };
 
   const toggleKey = (stageId: string, item: BuildingAnimationTrackProperty) => {
+    if (props.config.stages.find((stage) => stage.id === stageId)?.locked) return;
     const track = trackFor(stageId, item);
     const at = snapTime(props.progress, props.config, snap);
     const existing = track?.keys.find((key) => Math.abs(key.time - at) < 0.00001);
@@ -379,7 +415,7 @@ export function KeyframeTimeline(props: Props) {
 
   const toggleAnimation = (stageId: string, item: BuildingAnimationTrackProperty) => {
     const stage = props.config.stages.find((candidate) => candidate.id === stageId);
-    if (!stage) return;
+    if (!stage || stage.locked) return;
     const track = trackFor(stageId, item);
     if (!track) return addKey(stageId, item);
     const config = structuredClone(props.config);
@@ -387,6 +423,7 @@ export function KeyframeTimeline(props: Props) {
     target[item] = constrainValue(
       item,
       sampleBuildingTrack(track, props.progress, defaultTrackValue(stage, item)),
+      stage,
     );
     config.tracks = config.tracks.filter(
       (candidate) => candidate.stageId !== stageId || candidate.property !== item,
@@ -400,35 +437,23 @@ export function KeyframeTimeline(props: Props) {
   const editProperty = (stageId: string, item: BuildingAnimationTrackProperty, value: number) => {
     if (!Number.isFinite(value)) return;
     const config = structuredClone(props.config);
-    const stage = config.stages.find((candidate) => candidate.id === stageId);
-    if (!stage) return;
-    const nextValue = constrainValue(item, value);
-    let track = config.tracks.find(
-      (candidate) => candidate.stageId === stageId && candidate.property === item,
-    );
-    if (!track) {
-      track = { stageId, property: item, keys: [] };
-      config.tracks.push(track);
-    }
+    editAnimationValue(config, stageId, item, value, props.progress, snap, props.autoKey);
     const time = snapTime(props.progress, props.config, snap);
-    let key = track.keys.find((candidate) => Math.abs(candidate.time - time) < 0.00001);
-    if (!key) {
-      key = {
-        id: `key-${crypto.randomUUID()}`,
-        time,
-        value: nextValue,
-        interpolation: 'linear',
-        bezier: [...defaultBezier],
-      };
-      track.keys.push(key);
-      track.keys.sort((left, right) => left.time - right.time);
-    } else key.value = nextValue;
-    setSelectedKeys([{ stageId, property: item, id: key.id }]);
+    const key = config.tracks
+      .find((track) => track.stageId === stageId && track.property === item)
+      ?.keys.find((candidate) => Math.abs(candidate.time - time) < 0.00001);
+    setSelectedKeys(key ? [{ stageId, property: item, id: key.id }] : []);
     commit(config);
   };
 
   const deleteKeys = () => {
     if (!selectedKeys.length) return;
+    if (
+      selectedKeys.some(
+        (key) => props.config.stages.find((stage) => stage.id === key.stageId)?.locked,
+      )
+    )
+      return;
     const config = structuredClone(props.config);
     for (const track of config.tracks)
       track.keys = track.keys.filter(
@@ -446,6 +471,12 @@ export function KeyframeTimeline(props: Props) {
     update: (key: BuildingAnimationKeyframe, item: BuildingAnimationTrackProperty) => void,
   ) => {
     if (!selectedKeys.length) return;
+    if (
+      selectedKeys.some(
+        (key) => props.config.stages.find((stage) => stage.id === key.stageId)?.locked,
+      )
+    )
+      return;
     const config = structuredClone(props.config);
     for (const track of config.tracks) {
       for (const key of track.keys)
@@ -493,6 +524,7 @@ export function KeyframeTimeline(props: Props) {
         props.config.timeline.workAreaStart,
         props.config.timeline.workAreaEnd,
         ...props.config.stages.map((stage) => stage.milestone),
+        ...props.config.markers.map((marker) => marker.time),
         ...props.config.tracks.flatMap((track) => track.keys.map((key) => key.time)),
       ]),
     ].sort((left, right) => left - right);
@@ -535,7 +567,15 @@ export function KeyframeTimeline(props: Props) {
     const pasted: SelectedKey[] = [];
     for (const item of clipboard) {
       const stageId = singleSource ? (activeStageId ?? item.stageId) : item.stageId;
-      if (!config.stages.some((stage) => stage.id === stageId)) continue;
+      if (
+        !config.stages.some(
+          (stage) =>
+            stage.id === stageId &&
+            !stage.locked &&
+            stageTrackProperties(stage).includes(item.property),
+        )
+      )
+        continue;
       const time = snapTime(props.progress + item.offset, config, snap);
       let track = config.tracks.find(
         (candidate) => candidate.stageId === stageId && candidate.property === item.property,
@@ -549,14 +589,22 @@ export function KeyframeTimeline(props: Props) {
         key = {
           id: `key-${crypto.randomUUID()}`,
           time,
-          value: item.value,
+          value: constrainValue(
+            item.property,
+            item.value,
+            config.stages.find((stage) => stage.id === stageId),
+          ),
           interpolation: item.interpolation,
           bezier: [...item.bezier],
         };
         track.keys.push(key);
       } else
         Object.assign(key, {
-          value: item.value,
+          value: constrainValue(
+            item.property,
+            item.value,
+            config.stages.find((stage) => stage.id === stageId),
+          ),
           interpolation: item.interpolation,
           bezier: [...item.bezier],
         });
@@ -568,9 +616,7 @@ export function KeyframeTimeline(props: Props) {
     commit(config);
   };
 
-  const layerEntries = props.config.stages
-    .map((stage, index) => ({ stage, index }))
-    .sort((left, right) => left.stage.layerOrder - right.stage.layerOrder);
+  const layerEntries = animationLayerEntries(props.config);
   const visibleKeys = layerEntries
     .map(({ stage }) => stage)
     .filter((stage) => expanded.includes(stage.id))
@@ -608,6 +654,8 @@ export function KeyframeTimeline(props: Props) {
     selectStage(props.config.stages.findIndex((stage) => stage.id === key.stageId));
     if (!(event.ctrlKey || event.metaKey || event.shiftKey)) props.onProgress(time);
     if (!next.some((candidate) => sameKey(candidate, key))) return;
+    if (next.some((key) => props.config.stages.find((stage) => stage.id === key.stageId)?.locked))
+      return;
     keyDrag.current = {
       pointerId: event.pointerId,
       startX: event.clientX,
@@ -661,8 +709,12 @@ export function KeyframeTimeline(props: Props) {
     const drag = markerDrag.current;
     if (!drag || drag.pointerId !== event.pointerId || drag.index === 0) return;
     const stage = drag.config.stages[drag.index]!;
-    const before = drag.config.stages[drag.index - 1]!.milestone;
-    const after = drag.config.stages[drag.index + 1]?.milestone ?? 1.001;
+    if (stage.locked) return;
+    const images = drag.config.stages.filter(isImageStage);
+    const imageIndex = images.findIndex((item) => item.id === stage.id);
+    if (imageIndex <= 0) return;
+    const before = images[imageIndex - 1]!.milestone;
+    const after = images[imageIndex + 1]?.milestone ?? 1.001;
     const raw = stage.milestone + (event.clientX - drag.startX) / Math.max(1, drag.width);
     const next = Math.max(
       before + 0.0001,
@@ -681,17 +733,23 @@ export function KeyframeTimeline(props: Props) {
     const drag = layerDrag.current;
     if (!drag || drag.pointerId !== event.pointerId) return;
     const original = drag.config.stages.find((stage) => stage.id === drag.stageId);
-    if (!original) return;
+    if (!original || original.locked) return;
     const delta = (event.clientX - drag.startX) / Math.max(1, drag.width);
     const config = structuredClone(drag.config);
     const stage = config.stages.find((item) => item.id === drag.stageId)!;
     if (drag.mode === 'move') {
-      const length = original.outPoint - original.inPoint;
-      stage.inPoint = Math.max(
-        0,
-        Math.min(1 - length, snapTime(original.inPoint + delta, config, snap)),
+      moveAnimationClip(
+        config,
+        stage.id,
+        snapTime(original.inPoint + delta, config, snap) - original.inPoint,
       );
-      stage.outPoint = stage.inPoint + length;
+    } else if (drag.mode === 'trim-start') {
+      if (!isImageStage(stage) && stage.emissionStart === undefined)
+        stage.emissionStart = original.inPoint;
+      stage.inPoint = Math.min(
+        original.outPoint - Math.min(frameStep(config), original.outPoint - original.inPoint),
+        snapTime(original.inPoint + delta, config, snap),
+      );
     } else {
       stage.outPoint = Math.max(
         original.inPoint + frameStep(config),
@@ -713,19 +771,21 @@ export function KeyframeTimeline(props: Props) {
     emitConfig(config);
   };
   const reorderLayer = (sourceId: string, targetId: string) => {
+    if (props.config.stages.find((stage) => stage.id === sourceId)?.locked) return;
     if (sourceId === targetId) return;
-    const order = layerEntries.map(({ stage }) => stage.id);
-    const from = order.indexOf(sourceId);
-    const to = order.indexOf(targetId);
-    if (from < 0 || to < 0) return;
-    order.splice(from, 1);
-    order.splice(to, 0, sourceId);
     const config = structuredClone(props.config);
-    for (const stage of config.stages) stage.layerOrder = order.indexOf(stage.id);
+    reorderAnimationLayer(config, sourceId, targetId);
     commit(config);
   };
   const moveLayerOrder = (stageId: string, offset: number) => {
-    const order = layerEntries.map(({ stage }) => stage.id);
+    const source = props.config.stages.find((stage) => stage.id === stageId)!;
+    const order = layerEntries
+      .filter(({ stage }) =>
+        source.kind === 'filter'
+          ? stage.kind === 'filter' && stage.parentId === source.parentId
+          : stage.kind !== 'filter',
+      )
+      .map(({ stage }) => stage.id);
     const index = order.indexOf(stageId);
     const target = order[index + offset];
     if (target) reorderLayer(stageId, target);
@@ -815,15 +875,15 @@ export function KeyframeTimeline(props: Props) {
         levels[Math.max(0, Math.min(levels.length - 1, index + (event.deltaY < 0 ? 1 : -1)))]!;
       if (next === zoom) return;
       const pointerX = event.clientX - element.getBoundingClientRect().left;
-      const relative = clamp01((element.scrollLeft + pointerX - labelWidth) / (760 * zoom));
+      const relative = clamp01((element.scrollLeft + pointerX - labelWidth) / (trackWidth * zoom));
       setZoom(next);
       requestAnimationFrame(() => {
-        element.scrollLeft = Math.max(0, labelWidth + relative * 760 * next - pointerX);
+        element.scrollLeft = Math.max(0, labelWidth + relative * trackWidth * next - pointerX);
       });
     };
     area.addEventListener('wheel', onWheel, { passive: false });
     return () => area.removeEventListener('wheel', onWheel);
-  }, [zoom]);
+  }, [zoom, trackWidth, setZoom]);
   const togglePlayback = () => {
     if (
       !props.playing &&
@@ -857,7 +917,13 @@ export function KeyframeTimeline(props: Props) {
     } else if (event.code === 'Delete' || event.code === 'Backspace') {
       event.preventDefault();
       deleteKeys();
-    } else if (event.code === 'Space' && !command && !event.altKey) {
+    } else if (
+      event.code === 'Space' &&
+      !command &&
+      !event.altKey &&
+      !event.repeat &&
+      !target.closest('button')
+    ) {
       event.preventDefault();
       togglePlayback();
     } else if (event.code === 'KeyJ') {
@@ -878,13 +944,15 @@ export function KeyframeTimeline(props: Props) {
       props.onProgress(snapTime(props.progress + amount, props.config, true));
     } else if (event.code === 'ArrowUp' || event.code === 'ArrowDown') {
       event.preventDefault();
-      const index = props.config.stages.findIndex((stage) => stage.id === activeStageId);
-      selectStage(
-        Math.max(
-          0,
-          Math.min(props.config.stages.length - 1, index + (event.code === 'ArrowUp' ? -1 : 1)),
-        ),
-      );
+      const index = layerEntries.findIndex(({ stage }) => stage.id === activeStageId);
+      const next =
+        layerEntries[
+          Math.max(
+            0,
+            Math.min(layerEntries.length - 1, index + (event.code === 'ArrowUp' ? -1 : 1)),
+          )
+        ];
+      if (next) selectStage(next.index);
     } else if (event.code === 'Home') {
       event.preventDefault();
       props.onProgress(props.config.timeline.workAreaStart);
@@ -932,8 +1000,13 @@ export function KeyframeTimeline(props: Props) {
         : property === 'rotation' || property === 'skewX' || property === 'skewY'
           ? 90
           : 100;
-  const graphRange = Math.max(minimumRange, (graphRawMax - graphRawMin) * 1.2);
-  const graphMin = (graphRawMin + graphRawMax - graphRange) / 2;
+  const fixedGraphViewport =
+    graphViewport?.stageId === graphStage?.id && graphViewport?.property === property
+      ? graphViewport
+      : null;
+  const graphRange =
+    fixedGraphViewport?.range ?? Math.max(minimumRange, (graphRawMax - graphRawMin) * 1.2);
+  const graphMin = fixedGraphViewport?.min ?? (graphRawMin + graphRawMax - graphRange) / 2;
   const graphMax = graphMin + graphRange;
   const graphY = (value: number) => 122 - ((value - graphMin) / graphRange) * 100;
   const graphPath = graphValues
@@ -946,61 +1019,46 @@ export function KeyframeTimeline(props: Props) {
       : undefined;
   const graphSegmentEnd =
     selectedGraphIndex >= 0 ? graphTrack?.keys[selectedGraphIndex + 1] : undefined;
-  const graphBezier = graphSegmentStart
-    ? graphSegmentStart.interpolation === 'cubic-bezier'
-      ? graphSegmentStart.bezier
-      : presetBezier[graphSegmentStart.interpolation]
-    : undefined;
+  const graphBezier = graphSegmentStart ? animationKeyBezier(graphSegmentStart) : undefined;
   const tickStep = duration <= 8 ? 1 : duration <= 20 ? 2 : duration <= 60 ? 5 : 10;
   const ticks = Array.from(
     { length: Math.floor(duration / tickStep) + 1 },
     (_, index) => index * tickStep,
   );
-  const minimumDuration = Math.max(
-    0.1,
-    ...props.config.stages.map((stage) => stage.milestone * duration),
-    ...props.config.stages.map((stage) => stage.inPoint * duration + 0.001),
-    ...props.config.tracks.flatMap((track) => track.keys.map((key) => key.time * duration)),
-    props.config.timeline.workAreaStart * duration + 0.001,
-  );
+  const minimumDuration = minimumAnimationDuration(props.config);
   const changeDuration = (seconds: number) => {
     if (seconds < minimumDuration || seconds > 600 || seconds === duration) return;
-    const config = structuredClone(props.config);
+    const config = resizeAnimationDuration(props.config, seconds);
     const ratio = duration / seconds;
-    for (const stage of config.stages) {
-      stage.milestone = clamp01(stage.milestone * ratio);
-      stage.inPoint = clamp01(stage.inPoint * ratio);
-      stage.outPoint = stage.outPoint === 1 ? 1 : clamp01(stage.outPoint * ratio);
-    }
-    for (const track of config.tracks)
-      for (const key of track.keys) key.time = clamp01(key.time * ratio);
-    config.timeline.workAreaStart = clamp01(config.timeline.workAreaStart * ratio);
-    config.timeline.workAreaEnd =
-      config.timeline.workAreaEnd === 1 ? 1 : Math.min(1, config.timeline.workAreaEnd * ratio);
-    config.timeline.durationSeconds = seconds;
     commit(config, clamp01(props.progress * ratio));
   };
   const moveGraphPoint = (event: PointerEvent<SVGCircleElement>) => {
     const drag = graphDrag.current;
     if (!drag || drag.pointerId !== event.pointerId) return;
+    if (drag.config.stages.find((stage) => stage.id === drag.stageId)?.locked) return;
+    if (!drag.recorded && Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) < 2)
+      return;
     const track = drag.config.tracks.find(
       (candidate) => candidate.stageId === drag.stageId && candidate.property === drag.property,
     );
     const index = track?.keys.findIndex((candidate) => candidate.id === drag.keyId) ?? -1;
     if (!track || index < 0) return;
+    const point = moveAnimationGraphPoint(
+      drag,
+      track.keys[index]!,
+      { x: drag.startX, y: drag.startY },
+      { x: event.clientX, y: event.clientY },
+    );
     const before = track.keys[index - 1]?.time ?? -0.0001;
     const after = track.keys[index + 1]?.time ?? 1.0001;
     const time = Math.max(
       before + 0.0001,
-      Math.min(
-        after - 0.0001,
-        snapTime((event.clientX - drag.left) / drag.width, drag.config, snap),
-      ),
+      Math.min(after - 0.0001, snapTime(point.time, drag.config, snap)),
     );
-    const graphPosition = ((event.clientY - drag.top) / drag.height) * 145;
     const value = constrainValue(
       drag.property,
-      Math.round((drag.min + ((122 - graphPosition) / 100) * drag.range) * 1000) / 1000,
+      Math.round(point.value * 1000) / 1000,
+      drag.config.stages.find((stage) => stage.id === drag.stageId),
     );
     const current = props.config.tracks
       .find(
@@ -1033,6 +1091,9 @@ export function KeyframeTimeline(props: Props) {
   const moveBezierHandle = (event: PointerEvent<SVGCircleElement>) => {
     const drag = handleDrag.current;
     if (!drag || drag.pointerId !== event.pointerId) return;
+    if (drag.config.stages.find((stage) => stage.id === drag.stageId)?.locked) return;
+    if (!drag.recorded && Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) < 2)
+      return;
     const track = drag.config.tracks.find(
       (item) => item.stageId === drag.stageId && item.property === drag.property,
     );
@@ -1040,34 +1101,39 @@ export function KeyframeTimeline(props: Props) {
     const start = track?.keys[index];
     const end = track?.keys[index + 1];
     if (!start || !end) return;
-    const time = clamp01((event.clientX - drag.left) / drag.width);
-    const x = clamp01((time - start.time) / (end.time - start.time));
-    const graphPosition = ((event.clientY - drag.top) / drag.height) * 145;
-    const value = drag.min + ((122 - graphPosition) / 100) * drag.range;
-    const y =
-      Math.abs(end.value - start.value) < 0.000001
-        ? drag.handle === 0
-          ? 0
-          : 1
-        : clamp01((value - start.value) / (end.value - start.value));
-    const bezier =
-      start.interpolation === 'cubic-bezier'
-        ? ([...start.bezier] as [number, number, number, number])
-        : ([...presetBezier[start.interpolation]] as [number, number, number, number]);
-    bezier[drag.handle * 2] = x;
-    bezier[drag.handle * 2 + 1] = y;
-    if (!drag.recorded) {
-      remember(drag.config);
-      drag.recorded = true;
-    }
+    const initialBezier = animationKeyBezier(start);
+    const bezier = moveAnimationBezierHandle(
+      start,
+      end,
+      initialBezier,
+      drag.handle,
+      drag,
+      { x: drag.startX, y: drag.startY },
+      { x: event.clientX, y: event.clientY },
+    );
+    if (!drag.recorded && bezier.every((value, index) => value === initialBezier[index])) return;
     const config = structuredClone(props.config);
     const target = config.tracks
       .find((item) => item.stageId === drag.stageId && item.property === drag.property)
       ?.keys.find((key) => key.id === drag.keyId);
     if (!target) return;
+    if (
+      target.interpolation === 'cubic-bezier' &&
+      bezier.every((value, index) => Math.abs(value - target.bezier[index]!) < 0.000001)
+    )
+      return;
+    if (!drag.recorded) {
+      remember(drag.config);
+      drag.recorded = true;
+    }
     target.interpolation = 'cubic-bezier';
     target.bezier = bezier;
     emitConfig(config);
+  };
+  const finishGraphDrag = () => {
+    graphDrag.current = null;
+    handleDrag.current = null;
+    setGraphViewport(null);
   };
 
   return (
@@ -1075,13 +1141,25 @@ export function KeyframeTimeline(props: Props) {
       <div className="keyframe-toolbar">
         <div className="keyframe-toolbar-group">
           <strong>COMPOSITION</strong>
-          <button onClick={togglePlayback} title="Play / pause · Space">
+          <button
+            onClick={togglePlayback}
+            aria-label={props.playing ? 'Pause animation' : 'Play animation'}
+            title="Play / pause · Space"
+          >
             {props.playing ? 'Ⅱ' : '▶'}
           </button>
-          <button onClick={() => jumpAll(-1)} title="Previous key or marker · J">
+          <button
+            aria-label="Previous key or marker"
+            onClick={() => jumpAll(-1)}
+            title="Previous key or marker · J"
+          >
             ‹
           </button>
-          <button onClick={() => jumpAll(1)} title="Next key or marker · K">
+          <button
+            aria-label="Next key or marker"
+            onClick={() => jumpAll(1)}
+            title="Next key or marker · K"
+          >
             ›
           </button>
           <output className="ae-timecode" title="Current time in minutes:seconds:frames">
@@ -1113,10 +1191,10 @@ export function KeyframeTimeline(props: Props) {
           </label>
         </div>
         <div className="keyframe-toolbar-group">
-          <button onClick={undo} disabled={!history.current.undo.length} title="Undo · Ctrl+Z">
+          <button aria-label="Undo" onClick={undo} disabled={!props.canUndo} title="Undo · Ctrl+Z">
             ↶
           </button>
-          <button onClick={redo} disabled={!history.current.redo.length} title="Redo · Ctrl+Y">
+          <button aria-label="Redo" onClick={redo} disabled={!props.canRedo} title="Redo · Ctrl+Y">
             ↷
           </button>
           <button onClick={copyKeys} disabled={!selectedKeys.length} title="Copy keys · Ctrl+C">
@@ -1135,10 +1213,18 @@ export function KeyframeTimeline(props: Props) {
           <button onClick={deleteKeys} disabled={!selectedKeys.length} title="Delete selected keys">
             DELETE
           </button>
-          <button className={graphMode ? 'is-active' : ''} onClick={() => setGraphMode(!graphMode)}>
+          <button
+            aria-pressed={graphMode}
+            className={graphMode ? 'is-active' : ''}
+            onClick={() => {
+              finishGraphDrag();
+              setGraphMode(!graphMode);
+            }}
+          >
             GRAPH
           </button>
           <button
+            aria-pressed={animatedOnly}
             className={animatedOnly ? 'is-active' : ''}
             onClick={() => setAnimatedOnly(!animatedOnly)}
             title="Reveal animated properties · U"
@@ -1149,9 +1235,33 @@ export function KeyframeTimeline(props: Props) {
             <input
               type="checkbox"
               checked={snap}
-              onChange={(event) => setSnap(event.target.checked)}
+              onChange={(event) => props.onSnap(event.target.checked)}
             />{' '}
             FRAME SNAP
+          </label>
+          <label>
+            <input
+              type="checkbox"
+              checked={props.autoKey}
+              onChange={(event) => props.onAutoKey(event.target.checked)}
+            />{' '}
+            AUTO-KEY
+          </label>
+          <label>
+            FPS{' '}
+            <NumericInput
+              label="Timeline frame rate"
+              value={fps}
+              min={1}
+              max={120}
+              step={1}
+              onFocus={() => props.onPlaying(false)}
+              onCommit={(value) => {
+                const config = structuredClone(props.config);
+                config.timeline.frameRate = Math.round(value);
+                commit(config);
+              }}
+            />
           </label>
           <label>
             <input
@@ -1161,12 +1271,21 @@ export function KeyframeTimeline(props: Props) {
             />{' '}
             LOOP
           </label>
+          <button
+            title="Fit the full duration"
+            onClick={() => {
+              setZoom(1);
+              if (scrollRef.current) scrollRef.current.scrollLeft = 0;
+            }}
+          >
+            FIT
+          </button>
           <select
             aria-label="Playback speed"
             value={props.speed}
             onChange={(event) => props.onSpeed(Number(event.target.value))}
           >
-            {[0.25, 0.5, 1, 2, 4].map((value) => (
+            {[0.25, 0.5, 1, 1.5, 2, 4].map((value) => (
               <option key={value} value={value}>
                 {value}×
               </option>
@@ -1189,7 +1308,16 @@ export function KeyframeTimeline(props: Props) {
         </div>
       </div>
       <div className="keyframe-body">
-        <div className="keyframe-tracks-scroll" ref={scrollRef}>
+        <div
+          className="keyframe-tracks-scroll"
+          ref={scrollRef}
+          onScroll={(event) => {
+            if (!restoredScroll.current) return;
+            if (props.linkedScroll !== undefined) props.onScroll(event.currentTarget.scrollLeft);
+            view.scrollLeft = event.currentTarget.scrollLeft;
+            view.scrollTop = event.currentTarget.scrollTop;
+          }}
+        >
           <div
             className={`keyframe-sheet ${graphMode ? 'is-graph-mode' : ''}`}
             style={{ minWidth: sheetWidth, gridTemplateColumns: `${labelWidth}px minmax(0, 1fr)` }}
@@ -1261,10 +1389,11 @@ export function KeyframeTimeline(props: Props) {
               .map(({ stage, index }) => {
                 const isExpanded = expanded.includes(stage.id);
                 const isSelected = stage.id === activeStageId;
+                const relationshipClass = `${stage.kind === 'filter' ? 'is-dependent' : ''} ${stage.id === activeStage?.parentId || stage.parentId === activeStageId ? 'is-related' : ''}`;
                 return [
                   <div
                     key={`${stage.id}-label`}
-                    className={`keyframe-label ae-layer-label ${isSelected ? 'is-selected' : ''}`}
+                    className={`keyframe-label ae-layer-label ${isSelected ? 'is-selected' : ''} ${relationshipClass}`}
                     draggable={renamingStageId !== stage.id}
                     onDragStart={(event) => {
                       draggedLayerId.current = stage.id;
@@ -1282,6 +1411,8 @@ export function KeyframeTimeline(props: Props) {
                       className="ae-twirl"
                       onClick={() => toggleExpanded(stage.id)}
                       title={isExpanded ? 'Collapse layer' : 'Expand layer'}
+                      aria-label={`${isExpanded ? 'Collapse' : 'Expand'} layer ${stage.name}`}
+                      aria-expanded={isExpanded}
                     >
                       {isExpanded ? '▾' : '▸'}
                     </button>
@@ -1310,34 +1441,105 @@ export function KeyframeTimeline(props: Props) {
                           setStageNameDraft(stage.name);
                           setRenamingStageId(stage.id);
                         }}
-                        title="Drag to reorder · double-click to rename"
+                        title={
+                          stage.kind === 'filter'
+                            ? `Attached to ${props.config.stages.find((parent) => parent.id === stage.parentId)?.name} · drag to reorder sibling effects`
+                            : 'Drag to reorder resource with its effects · double-click to rename'
+                        }
                       >
-                        <b>{String(stage.layerOrder + 1).padStart(2, '0')}</b> {stage.name}
+                        <b>
+                          {stage.kind === 'filter'
+                            ? '↳ ƒx'
+                            : stage.kind === 'particles'
+                              ? '✦'
+                              : String(stage.layerOrder + 1).padStart(2, '0')}
+                        </b>{' '}
+                        {stage.name}
+                        {stage.kind === 'filter' ? (
+                          <small className="ae-effect-parent">
+                            {
+                              props.config.stages.find((parent) => parent.id === stage.parentId)
+                                ?.name
+                            }
+                          </small>
+                        ) : null}
                       </button>
                     )}
                     <button
                       className="ae-layer-order"
-                      disabled={stage.layerOrder === 0}
+                      disabled={stage.locked || stage.layerOrder === 0}
                       onClick={() => moveLayerOrder(stage.id, -1)}
                       title="Move layer forward"
+                      aria-label={`Move ${stage.name} forward`}
                     >
                       ↑
                     </button>
                     <button
                       className="ae-layer-order"
-                      disabled={stage.layerOrder === layerEntries.length - 1}
+                      disabled={stage.locked || stage.layerOrder === layerEntries.length - 1}
                       onClick={() => moveLayerOrder(stage.id, 1)}
                       title="Move layer backward"
+                      aria-label={`Move ${stage.name} backward`}
                     >
                       ↓
                     </button>
+                    {(['hidden', 'solo', 'locked'] as const).map((flag) => (
+                      <button
+                        key={flag}
+                        className="ae-layer-visibility"
+                        title={flag}
+                        aria-label={`${stage.name} ${flag}`}
+                        aria-pressed={stage[flag] === true}
+                        onClick={() => {
+                          const config = structuredClone(props.config);
+                          config.stages.find((item) => item.id === stage.id)![flag] = !stage[flag];
+                          commit(config);
+                        }}
+                      >
+                        {flag === 'hidden' ? '◉' : flag === 'solo' ? 'S' : 'L'}
+                      </button>
+                    ))}
                   </div>,
                   <div
                     key={`${stage.id}-lane`}
-                    className={`ae-layer-lane keyframe-canvas ${isSelected ? 'is-selected' : ''}`}
+                    className={`ae-layer-lane keyframe-canvas ${isSelected ? 'is-selected' : ''} ${relationshipClass}`}
                   >
+                    {particleTailSeconds(props.config, stage) > 0 ? (
+                      <div
+                        className="ae-layer-tail"
+                        style={{
+                          left: `${stage.outPoint * 100}%`,
+                          width: `${Math.max(0, Math.min(1 - stage.outPoint, particleTailSeconds(props.config, stage) / duration)) * 100}%`,
+                        }}
+                        title={`Particle tail / ${particleTailSeconds(props.config, stage).toFixed(2)} s`}
+                      />
+                    ) : null}
+                    <button
+                      className="ae-layer-trim is-start"
+                      disabled={stage.locked}
+                      style={{ left: `${stage.inPoint * 100}%` }}
+                      title={`Trim ${stage.name} start / retain emission phase`}
+                      aria-label={`Trim ${stage.name} start`}
+                      onPointerDown={(event) => {
+                        selectStage(index);
+                        layerDrag.current = {
+                          pointerId: event.pointerId,
+                          startX: event.clientX,
+                          width: event.currentTarget.parentElement?.clientWidth ?? 1,
+                          stageId: stage.id,
+                          mode: 'trim-start',
+                          config: structuredClone(props.config),
+                          recorded: false,
+                        };
+                        event.currentTarget.setPointerCapture(event.pointerId);
+                      }}
+                      onPointerMove={moveLayer}
+                      onPointerUp={() => (layerDrag.current = null)}
+                      onLostPointerCapture={() => (layerDrag.current = null)}
+                    />
                     <button
                       className="ae-layer-bar"
+                      disabled={stage.locked}
                       type="button"
                       aria-label={`Select layer ${stage.name}`}
                       style={{
@@ -1364,6 +1566,7 @@ export function KeyframeTimeline(props: Props) {
                     />
                     <button
                       className="ae-layer-trim"
+                      disabled={stage.locked}
                       style={{ left: `${stage.outPoint * 100}%` }}
                       title={`Trim ${stage.name} end · ${(stage.outPoint * duration).toFixed(2)} s`}
                       aria-label={`Trim ${stage.name} end`}
@@ -1384,32 +1587,37 @@ export function KeyframeTimeline(props: Props) {
                       onPointerUp={() => (layerDrag.current = null)}
                       onLostPointerCapture={() => (layerDrag.current = null)}
                     />
-                    <button
-                      className={`keyframe-stage-marker ${isSelected ? 'is-selected' : ''}`}
-                      style={{ left: `${stage.milestone * 100}%` }}
-                      title={`${stage.name} transition marker ${(stage.milestone * duration).toFixed(2)} s · drag to retime transition`}
-                      onPointerDown={(event) => {
-                        selectStage(index);
-                        props.onProgress(stage.milestone);
-                        markerDrag.current = {
-                          pointerId: event.pointerId,
-                          startX: event.clientX,
-                          width: event.currentTarget.parentElement?.clientWidth ?? 1,
-                          config: structuredClone(props.config),
-                          index,
-                          recorded: false,
-                        };
-                        event.currentTarget.setPointerCapture(event.pointerId);
-                      }}
-                      onPointerMove={moveMarker}
-                      onPointerUp={() => (markerDrag.current = null)}
-                      onLostPointerCapture={() => (markerDrag.current = null)}
-                    >
-                      {index + 1}
-                    </button>
+                    {isImageStage(stage) ? (
+                      <button
+                        className={`keyframe-stage-marker ${isSelected ? 'is-selected' : ''}`}
+                        disabled={stage.locked}
+                        style={{ left: `${stage.milestone * 100}%` }}
+                        title={`${stage.name} transition marker ${(stage.milestone * duration).toFixed(2)} s · drag to retime transition`}
+                        onPointerDown={(event) => {
+                          selectStage(index);
+                          props.onProgress(stage.milestone);
+                          markerDrag.current = {
+                            pointerId: event.pointerId,
+                            startX: event.clientX,
+                            width: event.currentTarget.parentElement?.clientWidth ?? 1,
+                            config: structuredClone(props.config),
+                            index,
+                            recorded: false,
+                          };
+                          event.currentTarget.setPointerCapture(event.pointerId);
+                        }}
+                        onPointerMove={moveMarker}
+                        onPointerUp={() => (markerDrag.current = null)}
+                        onLostPointerCapture={() => (markerDrag.current = null)}
+                      >
+                        {index + 1}
+                      </button>
+                    ) : null}
                   </div>,
                   ...(isExpanded || graphMode
                     ? propertyGroups.flatMap((items, groupIndex) => {
+                        if (!items.every((item) => stageTrackProperties(stage).includes(item)))
+                          return [];
                         if (graphMode && !items.includes(property)) return [];
                         if (
                           !graphMode &&
@@ -1431,7 +1639,11 @@ export function KeyframeTimeline(props: Props) {
                                 setProperty(item);
                               }}
                             >
-                              {groupLabels[groupIndex]}
+                              {item in animationEffectParameters
+                                ? effectParameter(stage, item as AnimationEffectProperty).label
+                                : item === 'opacity' && stage.kind === 'filter'
+                                  ? 'Mix'
+                                  : groupLabels[groupIndex]}
                             </button>
                             <span className="ae-paired-values">
                               {displayedItems.map((axis, axisIndex) => {
@@ -1455,7 +1667,10 @@ export function KeyframeTimeline(props: Props) {
                                     ) : null}
                                     <button
                                       className={`ae-stopwatch ${axisTrack ? 'is-on' : ''}`}
+                                      disabled={stage.locked}
                                       title={`${propertyLabels[axis]} animation`}
+                                      aria-label={`Animate ${stage.name} ${propertyLabels[axis]}`}
+                                      aria-pressed={!!axisTrack}
                                       onClick={() => toggleAnimation(stage.id, axis)}
                                     >
                                       ◷
@@ -1464,6 +1679,19 @@ export function KeyframeTimeline(props: Props) {
                                       label={`${stage.name} ${propertyLabels[axis]} value`}
                                       step={0.01}
                                       value={Number(value.toFixed(3))}
+                                      disabled={stage.locked}
+                                      min={
+                                        axis in animationEffectParameters
+                                          ? effectParameter(stage, axis as AnimationEffectProperty)
+                                              .min
+                                          : undefined
+                                      }
+                                      max={
+                                        axis in animationEffectParameters
+                                          ? effectParameter(stage, axis as AnimationEffectProperty)
+                                              .max
+                                          : undefined
+                                      }
                                       onFocus={() => {
                                         props.onPlaying(false);
                                         setProperty(axis);
@@ -1472,7 +1700,10 @@ export function KeyframeTimeline(props: Props) {
                                     />
                                     <button
                                       className={`ae-key-toggle ${atCurrent ? 'has-key' : ''}`}
+                                      disabled={stage.locked}
                                       title={`${propertyLabels[axis]} key at current time`}
+                                      aria-label={`Key ${stage.name} ${propertyLabels[axis]} at current time`}
+                                      aria-pressed={atCurrent}
                                       onClick={() => toggleKey(stage.id, axis)}
                                     >
                                       ◆
@@ -1484,6 +1715,7 @@ export function KeyframeTimeline(props: Props) {
                             <button
                               className="ae-key-nav"
                               title="Previous key"
+                              aria-label={`Previous ${stage.name} ${propertyLabels[item]} key`}
                               onClick={() =>
                                 jumpProperty(
                                   stage.id,
@@ -1497,6 +1729,7 @@ export function KeyframeTimeline(props: Props) {
                             <button
                               className="ae-key-nav"
                               title="Next key"
+                              aria-label={`Next ${stage.name} ${propertyLabels[item]} key`}
                               onClick={() =>
                                 jumpProperty(
                                   stage.id,
@@ -1566,6 +1799,7 @@ export function KeyframeTimeline(props: Props) {
                                             : '70%',
                                     }}
                                     title={`${propertyLabels[axis]} · ${(key.time * duration).toFixed(2)} s · ${key.value}`}
+                                    aria-label={`${stage.name} ${propertyLabels[axis]} key at ${(key.time * duration).toFixed(2)} seconds`}
                                     onPointerDown={(event) => selectKey(event, identity, key.time)}
                                     onPointerMove={moveKeys}
                                     onPointerUp={() => (keyDrag.current = null)}
@@ -1613,10 +1847,58 @@ export function KeyframeTimeline(props: Props) {
                         strokeWidth="2"
                         vectorEffect="non-scaling-stroke"
                       />
+                      {graphTrack?.keys.map((key) => (
+                        <circle
+                          key={key.id}
+                          cx={key.time * 1000}
+                          cy={graphY(key.value)}
+                          r="5"
+                          fill="#85d7e8"
+                          onPointerDown={(event) => {
+                            if (event.button !== 0) return;
+                            event.preventDefault();
+                            event.stopPropagation();
+                            rootRef.current?.focus();
+                            props.onPlaying(false);
+                            setSelectedKeys([{ stageId: graphStage.id, property, id: key.id }]);
+                            props.onProgress(key.time);
+                            const bounds =
+                              event.currentTarget.ownerSVGElement!.getBoundingClientRect();
+                            graphDrag.current = {
+                              pointerId: event.pointerId,
+                              startX: event.clientX,
+                              startY: event.clientY,
+                              left: bounds.left,
+                              top: bounds.top,
+                              width: bounds.width,
+                              height: bounds.height,
+                              stageId: graphStage.id,
+                              property,
+                              keyId: key.id,
+                              min: graphMin,
+                              range: graphRange,
+                              config: structuredClone(props.config),
+                              recorded: false,
+                            };
+                            setGraphViewport({
+                              stageId: graphStage.id,
+                              property,
+                              min: graphMin,
+                              range: graphRange,
+                            });
+                            event.currentTarget.setPointerCapture(event.pointerId);
+                          }}
+                          onPointerMove={moveGraphPoint}
+                          onPointerUp={finishGraphDrag}
+                          onPointerCancel={finishGraphDrag}
+                          onLostPointerCapture={finishGraphDrag}
+                        />
+                      ))}
                       {graphSegmentStart &&
                       graphSegmentEnd &&
                       graphBezier &&
-                      graphSegmentStart.interpolation !== 'step' ? (
+                      graphSegmentStart.interpolation !== 'step' &&
+                      graphSegmentStart.interpolation !== 'ease-in-out' ? (
                         <>
                           {([0, 1] as const).map((handle) => {
                             const fractionX = graphBezier[handle * 2]!;
@@ -1628,6 +1910,11 @@ export function KeyframeTimeline(props: Props) {
                               graphSegmentStart.value +
                               (graphSegmentEnd.value - graphSegmentStart.value) * fractionY;
                             const anchor = handle === 0 ? graphSegmentStart : graphSegmentEnd;
+                            const onKey = graphTrack?.keys.some(
+                              (key) =>
+                                Math.abs(key.time - handleTime) < 0.000001 &&
+                                Math.abs(key.value - handleValue) < 0.000001,
+                            );
                             return (
                               <g key={handle}>
                                 <line
@@ -1638,16 +1925,23 @@ export function KeyframeTimeline(props: Props) {
                                   y2={graphY(handleValue)}
                                 />
                                 <circle
-                                  className="ae-bezier-handle"
+                                  className={`ae-bezier-handle${onKey ? ' is-on-key' : ''}`}
                                   cx={handleTime * 1000}
                                   cy={graphY(handleValue)}
-                                  r="5"
+                                  r={onKey ? 8 : 5}
+                                  aria-label={`Bézier ${handle === 0 ? 'outgoing' : 'incoming'} handle`}
                                   onPointerDown={(event) => {
+                                    if (event.button !== 0) return;
+                                    event.preventDefault();
                                     event.stopPropagation();
+                                    rootRef.current?.focus();
+                                    props.onPlaying(false);
                                     const bounds =
                                       event.currentTarget.ownerSVGElement!.getBoundingClientRect();
                                     handleDrag.current = {
                                       pointerId: event.pointerId,
+                                      startX: event.clientX,
+                                      startY: event.clientY,
                                       left: bounds.left,
                                       top: bounds.top,
                                       width: bounds.width,
@@ -1664,49 +1958,15 @@ export function KeyframeTimeline(props: Props) {
                                     event.currentTarget.setPointerCapture(event.pointerId);
                                   }}
                                   onPointerMove={moveBezierHandle}
-                                  onPointerUp={() => (handleDrag.current = null)}
-                                  onLostPointerCapture={() => (handleDrag.current = null)}
+                                  onPointerUp={finishGraphDrag}
+                                  onPointerCancel={finishGraphDrag}
+                                  onLostPointerCapture={finishGraphDrag}
                                 />
                               </g>
                             );
                           })}
                         </>
                       ) : null}
-                      {graphTrack?.keys.map((key) => (
-                        <circle
-                          key={key.id}
-                          cx={key.time * 1000}
-                          cy={graphY(key.value)}
-                          r="5"
-                          fill="#85d7e8"
-                          onPointerDown={(event) => {
-                            event.stopPropagation();
-                            rootRef.current?.focus();
-                            setSelectedKeys([{ stageId: graphStage.id, property, id: key.id }]);
-                            props.onProgress(key.time);
-                            const bounds =
-                              event.currentTarget.ownerSVGElement!.getBoundingClientRect();
-                            graphDrag.current = {
-                              pointerId: event.pointerId,
-                              left: bounds.left,
-                              top: bounds.top,
-                              width: bounds.width,
-                              height: bounds.height,
-                              stageId: graphStage.id,
-                              property,
-                              keyId: key.id,
-                              min: graphMin,
-                              range: graphRange,
-                              config: structuredClone(props.config),
-                              recorded: false,
-                            };
-                            event.currentTarget.setPointerCapture(event.pointerId);
-                          }}
-                          onPointerMove={moveGraphPoint}
-                          onPointerUp={() => (graphDrag.current = null)}
-                          onLostPointerCapture={() => (graphDrag.current = null)}
-                        />
-                      ))}
                     </svg>
                     <span className="ae-graph-max">{graphMax.toFixed(2)}</span>
                     <span className="ae-graph-min">{graphMin.toFixed(2)}</span>
@@ -1721,7 +1981,7 @@ export function KeyframeTimeline(props: Props) {
             />
           </div>
         </div>
-        <div className="keyframe-inspector">
+        <div className={`keyframe-inspector ${selectedKey ? 'has-selected-key' : ''}`}>
           <span>KEYFRAME CONTROLS</span>
           {selectedKey && selectedLast ? (
             <>
@@ -1750,7 +2010,14 @@ export function KeyframeTimeline(props: Props) {
                   step={0.01}
                   disabled={selectedKeys.length !== 1}
                   onCommit={(next) =>
-                    changeSelected((key, item) => (key.value = constrainValue(item, next)))
+                    changeSelected(
+                      (key, item) =>
+                        (key.value = constrainValue(
+                          item,
+                          next,
+                          props.config.stages.find((stage) => stage.id === selectedLast.stageId),
+                        )),
+                    )
                   }
                 />
               </label>
@@ -1759,8 +2026,11 @@ export function KeyframeTimeline(props: Props) {
                 <select
                   value={selectedKey.interpolation}
                   onChange={(event) =>
-                    changeSelected(
-                      (key) => (key.interpolation = event.target.value as BuildingKeyInterpolation),
+                    changeSelected((key) =>
+                      setAnimationKeyInterpolation(
+                        key,
+                        event.target.value as BuildingKeyInterpolation,
+                      ),
                     )
                   }
                 >
@@ -1781,6 +2051,16 @@ export function KeyframeTimeline(props: Props) {
                   EASY EASE · F9
                 </button>
               </div>
+              {selectedKey.interpolation === 'ease-in-out' ? (
+                <button
+                  title="Convert Easy Ease to an editable cubic approximation"
+                  onClick={() =>
+                    changeSelected((key) => setAnimationKeyInterpolation(key, 'cubic-bezier'))
+                  }
+                >
+                  EDIT BÉZIER
+                </button>
+              ) : null}
               {selectedKey.interpolation === 'cubic-bezier' ? (
                 <div className="keyframe-bezier">
                   <span>BÉZIER [X1, Y1, X2, Y2]</span>
@@ -1807,8 +2087,8 @@ export function KeyframeTimeline(props: Props) {
             </>
           ) : (
             <p>
-              Раскройте слой и включите секундомер у свойства. На текущем времени появится первый
-              ключ. Изменение значения добавит следующий ключ автоматически.
+              Секундомер включает анимацию свойства. При выключенном AUTO-KEY неанимируемое свойство
+              меняет базовое значение; существующий track редактируется на текущем времени.
             </p>
           )}
           <small className="keyframe-export-note">

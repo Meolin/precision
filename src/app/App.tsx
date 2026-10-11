@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { NumericSetting } from '../game/config/GameConfig';
 import { withDamagePopupCurve, withSetting } from '../game/config/defaultGameConfig';
 import type { GameRuntime } from '../game/core/GameRuntime';
@@ -17,9 +17,10 @@ import './App.css';
 import { RtsController } from '../game/client/RtsController';
 import { SelectionPanel } from '../ui/SelectionPanel/SelectionPanel';
 import { AnimationSandbox } from '../ui/AnimationSandbox/AnimationSandbox';
-import { createDefaultBuildingAnimationConfig } from '../game/buildings/BuildingAnimationConfig';
-import type { BuildingAnimationPreview } from '../game/buildings/BuildingAnimationPreview';
+import { useAnimationDocument } from '../ui/AnimationSandbox/useAnimationDocument';
 import { createDefaultAppSettings, saveAppSettings, type AppSettings } from './AppSettings';
+import { loadRockLayerMask } from '../game/rendering/loadRockLayerMask';
+import { loadRockDensityMask } from '../game/rendering/loadRockDensityMask';
 
 export function App({
   runtime,
@@ -41,17 +42,10 @@ export function App({
   const [terrainSmoothing, setTerrainSmoothing] = useState(() => initialSettings.terrainSmoothing);
   const [terrainTexture, setTerrainTexture] = useState(() => initialSettings.terrainTexture);
   const [savedCameraZoom, setSavedCameraZoom] = useState(initialSettings.cameraZoom);
-  const [buildingPreview, setBuildingPreview] = useState<BuildingAnimationPreview>(() => ({
-    config: createDefaultBuildingAnimationConfig(),
-    progress: 0,
-    visible: false,
-    onionSkinStageIndex: null,
-    sourceUrls: {},
-    sourceRevision: 0,
-    position: null,
-    opacity: 1,
-    showHitbox: true,
-  }));
+  const [saveError, setSaveError] = useState(false);
+  const saveQueue = useRef<Promise<void>>(Promise.resolve());
+  const animation = useAnimationDocument();
+  const buildingPreview = animation.preview;
   useEffect(() => {
     runtime.recordCollisionSamples = debug.samples;
     runtime.recordPenetrationPaths = debug.penetration;
@@ -61,8 +55,35 @@ export function App({
     [controls],
   );
   useEffect(() => {
+    let cancelled = false;
+    void Promise.all([
+      loadRockLayerMask(terrainTexture).catch(() => null),
+      loadRockDensityMask(terrainTexture),
+    ])
+      .then(([rockLayerMask, rockDensityMask]) => {
+        if (cancelled) return;
+        const current = runtime.getConfig();
+        setConfig(
+          runtime.updateConfig({
+            ...current,
+            terrain: { ...current.terrain, rockLayerMask, rockDensityMask },
+          }),
+        );
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        console.warn(
+          `Rock simulation mask could not be loaded. ${error instanceof Error ? error.message : String(error)}`,
+        );
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [runtime, terrainTexture]);
+  useEffect(() => {
+    let current = true;
     const timeout = window.setTimeout(() => {
-      void saveAppSettings({
+      const settings: AppSettings = {
         version: 1,
         gameConfig: config,
         debug,
@@ -70,9 +91,24 @@ export function App({
         terrainSmoothing,
         terrainTexture,
         cameraZoom: savedCameraZoom,
-      }).catch(() => undefined);
+      };
+      const pending = saveQueue.current
+        .catch(() => undefined)
+        .then(() => saveAppSettings(settings));
+      saveQueue.current = pending;
+      void pending.then(
+        () => {
+          if (current) setSaveError(false);
+        },
+        () => {
+          if (current) setSaveError(true);
+        },
+      );
     }, 200);
-    return () => window.clearTimeout(timeout);
+    return () => {
+      current = false;
+      window.clearTimeout(timeout);
+    };
   }, [config, debug, savedCameraZoom, shaders, terrainSmoothing, terrainTexture]);
   const togglePause = useCallback(() => {
     runtime.setPaused(!runtime.isPaused());
@@ -98,41 +134,35 @@ export function App({
   );
 
   return (
-    <div className="app-shell">
-      <header className="app-header">
-        <div className="brand">
-          <svg viewBox="0 0 32 32" aria-hidden="true">
-            <circle cx="16" cy="16" r="9" />
-            <path d="M16 1v9m0 12v9M1 16h9m12 0h9" />
-            <circle cx="16" cy="16" r="2" />
-          </svg>
-          <span>
-            BALLISTICS<span className="brand-divider">/</span>
-            <b>LAB</b>
-          </span>
-          <span className="version-badge">STEP 7</span>
-        </div>
-        <div className="header-tools">
-          <nav className="view-tabs" aria-label="Режим приложения">
-            <button
-              className={activeView === 'game' ? 'is-active' : ''}
-              onClick={() => setActiveView('game')}
-            >
-              GAME
-            </button>
-            <button
-              className={activeView === 'animation' ? 'is-active' : ''}
-              onClick={() => setActiveView('animation')}
-            >
-              ANIMATION SANDBOX
-            </button>
-          </nav>
-          <span className="header-note">
-            <span className="status-dot" />
-            Локальный полигон
-          </span>
-        </div>
-      </header>
+    <div className={`app-shell ${activeView === 'animation' ? 'app-shell-animation' : ''}`}>
+      {activeView === 'game' ? (
+        <header className="app-header">
+          <div className="brand">
+            <svg viewBox="0 0 32 32" aria-hidden="true">
+              <circle cx="16" cy="16" r="9" />
+              <path d="M16 1v9m0 12v9M1 16h9m12 0h9" />
+              <circle cx="16" cy="16" r="2" />
+            </svg>
+            <span>
+              BALLISTICS<span className="brand-divider">/</span>
+              <b>LAB</b>
+            </span>
+            <span className="version-badge">STEP 7</span>
+          </div>
+          <div className="header-tools">
+            <nav className="view-tabs" aria-label="Режим приложения">
+              <button className="is-active" onClick={() => setActiveView('game')}>
+                GAME
+              </button>
+              <button onClick={() => setActiveView('animation')}>ANIMATION SANDBOX</button>
+            </nav>
+            <span className="header-note">
+              <span className="status-dot" />
+              Локальный полигон
+            </span>
+          </div>
+        </header>
+      ) : null}
       {activeView === 'game' ? (
         <main className="workspace">
           <div className="workspace-main">
@@ -172,6 +202,11 @@ export function App({
                   </button>
                 </div>
               </div>
+              {saveError && (
+                <p role="alert" className="behavior-note">
+                  Не удалось сохранить настройки. Следующее изменение повторит попытку.
+                </p>
+              )}
               <GameCanvas
                 shaders={shaders}
                 terrainSmoothing={terrainSmoothing}
@@ -183,6 +218,7 @@ export function App({
                 onPause={togglePause}
                 onReset={resetScene}
                 buildingPreview={buildingPreview}
+                onBuildingAssets={animation.onAssets}
               />
               <div className="range-bottom">
                 <div className="scene-legend">
@@ -318,7 +354,8 @@ export function App({
           terrainSmoothing={terrainSmoothing}
           terrainTexture={terrainTexture}
           preview={buildingPreview}
-          onPreview={setBuildingPreview}
+          onPreview={animation.update}
+          document={animation}
           onOpenGame={() => setActiveView('game')}
           onToggleTerrainDebug={toggleTerrainDebug}
           onPause={togglePause}

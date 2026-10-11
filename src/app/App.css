@@ -71,6 +71,9 @@ kbd {
   margin: auto;
   padding: 0 34px;
 }
+.app-shell-animation {
+  max-width: none;
+}
 .app-header {
   min-height: 85px;
   display: flex;

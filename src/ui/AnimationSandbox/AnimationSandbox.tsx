@@ -1,11 +1,13 @@
 import {
   useEffect,
   useId,
+  useMemo,
   useRef,
   useState,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
+  type CSSProperties,
 } from 'react';
 import type { GameRuntime } from '../../game/core/GameRuntime';
 import type { RtsController } from '../../game/client/RtsController';
@@ -21,12 +23,53 @@ import {
   type BuildingAnimationConfig,
   type BuildingAnimationStage,
   type BuildingAnimationTransition,
-  type BuildingAnimationTrackProperty,
 } from '../../game/buildings/BuildingAnimationConfig';
 import type { BuildingAnimationPreview } from '../../game/buildings/BuildingAnimationPreview';
 import { isInsideViewport, screenToWorld } from '../../game/rendering/viewport';
 import { KeyframeTimeline } from './KeyframeTimeline';
 import './AnimationSandbox.css';
+import type { AnimationDocument } from './useAnimationDocument';
+import { NumericInput, TextInput } from './EditorInput';
+import {
+  editAnimationValue,
+  sampleAnimationStage,
+  renameAnimationAsset,
+  renameParticleTexture,
+} from './AnimationEditing';
+import { AnimationTabs } from './AnimationTabs';
+import { AnimationMarkers } from './AnimationMarkers';
+import { AudioTimeline } from './AudioTimeline';
+import { loadBuildingAnimationLibrary } from '../../game/buildings/BuildingAnimationLibrary';
+import { createDefaultBuildingTransition } from '../../game/buildings/BuildingAnimationTransitions';
+import { TransitionControls } from './TransitionControls';
+import {
+  animationLayerEntries,
+  createAnimationEffectStage,
+  isImageStage,
+  normalizeAnimationLayers,
+  removeAnimationLayers,
+  reorderAnimationLayer,
+  stageTrackProperties,
+  animationFilterCatalog,
+  animationTextureAssets,
+  type AnimationEffectPreset,
+} from '../../game/buildings/BuildingAnimationEffects';
+import {
+  addBuiltinEffectPreset,
+  applyAnimationPreset,
+  builtinEffectPresets,
+  captureAnimationPreset,
+  changeEffectCenterSpace,
+  duplicateAnimationResource,
+} from './AnimationEffectEditing';
+import {
+  AnimationEffectControls,
+  AnimationEffectPalette,
+  type AddAnimationEffect,
+} from './AnimationEffectControls';
+import { AnimationOriginOverlay } from './AnimationOriginOverlay';
+import { importAnimationImages } from './AnimationImageImport';
+import { animationLibraryAssetIds } from '../../game/buildings/BuildingAnimationLibrary';
 
 interface Props {
   runtime: GameRuntime;
@@ -36,37 +79,22 @@ interface Props {
   terrainSmoothing: TerrainSmoothingSettings;
   terrainTexture: TerrainTextureSettings;
   preview: BuildingAnimationPreview;
-  onPreview: (preview: BuildingAnimationPreview) => void;
+  onPreview: (preview: BuildingAnimationPreview, record?: boolean) => void;
+  document: AnimationDocument;
   onOpenGame: () => void;
   onToggleTerrainDebug: (key: 'collisionMask' | 'terrainChunks' | 'terrainDirtyRects') => void;
   onPause: () => void;
   onReset: () => void;
 }
 
-const transitionDefaults = (
-  fromStageId: string,
-  toStageId: string,
-): BuildingAnimationTransition => ({
-  fromStageId,
-  toStageId,
-  type: 'dissolve',
-  direction: 'bottom-to-top',
-  noiseScale: 8,
-  directionStrength: 0.68,
-  edgeWidth: 0.08,
-  edgeIntensity: 1,
-  edgeColor: '#85d7e8',
-  easing: 'ease-out',
-  blendMode: 'normal',
-});
-
 function transitionsFor(stages: BuildingAnimationStage[], current: BuildingAnimationTransition[]) {
+  stages = stages.filter(isImageStage);
   return stages.slice(1).map((stage, index) => {
     const from = stages[index]!;
     return (
       current.find(
         (transition) => transition.fromStageId === from.id && transition.toStageId === stage.id,
-      ) ?? transitionDefaults(from.id, stage.id)
+      ) ?? createDefaultBuildingTransition(from.id, stage.id)
     );
   });
 }
@@ -122,66 +150,120 @@ async function inspectPngAlpha(file: File): Promise<{
 
 export function AnimationSandbox(props: Props) {
   const { preview, onPreview } = props;
-  const [selectedIndices, setSelectedIndices] = useState<number[]>([0]);
-  const [playing, setPlaying] = useState(false);
-  const [loop, setLoop] = useState(true);
-  const [speed, setSpeed] = useState(1);
+  const activeAnimationId = props.document.preview.activeAnimationId;
+  const [layerSelections, setLayerSelections] = useState<Record<string, string[]>>({});
+  const selectedIds =
+    layerSelections[activeAnimationId] ??
+    props.document.session.view(activeAnimationId).selectedLayerIds;
+  const validIndices = selectedIds
+    .map((id) => preview.config.stages.findIndex((stage) => stage.id === id))
+    .filter((index) => index >= 0);
+  const selectedIndices = validIndices.length ? validIndices : [0];
+  const setSelectedIndices = (next: number[] | ((current: number[]) => number[])) => {
+    const indices = typeof next === 'function' ? next(selectedIndices) : next;
+    const ids = indices.flatMap((index) =>
+      preview.config.stages[index] ? [preview.config.stages[index]!.id] : [],
+    );
+    props.document.session.view(activeAnimationId).selectedLayerIds = ids;
+    setLayerSelections((current) => ({ ...current, [activeAnimationId]: ids }));
+  };
+  const [timelineHeights, setTimelineHeights] = useState({ animation: 330, audio: 330, both: 400 });
+  const gridRef = useRef<HTMLDivElement>(null);
+  const splitterDrag = useRef<{ y: number; height: number } | null>(null);
+  const { timelineMode, setTimelineMode } = props.document;
+  const timelineHeight = timelineHeights[timelineMode];
+  const setTimelineHeight = (value: number | ((height: number) => number)) =>
+    setTimelineHeights((heights) => ({
+      ...heights,
+      [timelineMode]: typeof value === 'function' ? value(heights[timelineMode]) : value,
+    }));
+  const changeTimelineMode = setTimelineMode;
+  const { playing, setPlaying, loop, setLoop, speed, setSpeed } = props.document;
   const [importError, setImportError] = useState('');
   const [placing, setPlacing] = useState(false);
   const importRef = useRef<HTMLInputElement>(null);
-  const frameRef = useRef<number | null>(null);
-  const lastTimeRef = useRef(0);
   const previewRef = useRef(preview);
   const importRevision = useRef(0);
+  const [importing, setImporting] = useState(false);
+  const [toolbarHidden, setToolbarHidden] = useState(false);
+  const [openSettingsSections, setOpenSettingsSections] = useState<string[]>(['inspector']);
+  const [showOrigins, setShowOrigins] = useState(true);
+  const [presetName, setPresetName] = useState('');
+  const [filterClipboard, setFilterClipboard] = useState<AnimationEffectPreset>();
+  const toggleSettingsSection = (section: string) =>
+    setOpenSettingsSections((current) =>
+      current.includes(section)
+        ? current.filter((item) => item !== section)
+        : [...current, section],
+    );
+  const relinkRef = useRef<HTMLInputElement>(null);
+  const stageList = useRef<HTMLDivElement>(null);
+  const effectPalette = useRef<HTMLDivElement>(null);
   previewRef.current = preview;
   const selectedIndex = selectedIndices[selectedIndices.length - 1] ?? 0;
+  const selectedId = preview.config.stages[selectedIndex]?.id;
   const isMultiSelection = selectedIndices.length > 1;
-  const selectedStage = preview.config.stages[selectedIndex];
+  const selectedStage = sampleAnimationStage(
+    preview.config,
+    preview.config.stages[selectedIndex]?.id ?? '',
+    preview.progress,
+  );
   const selectedLayerOrder = selectedStage?.layerOrder ?? 0;
-  const orderedStageEntries = preview.config.stages
-    .map((stage, index) => ({ stage, index }))
-    .sort((left, right) => left.stage.layerOrder - right.stage.layerOrder);
+  const orderedStageEntries = animationLayerEntries(preview.config);
+  const layerSequence = orderedStageEntries
+    .map(({ stage }) => `${stage.id}:${stage.layerOrder}`)
+    .join('|');
+  const imageStages = preview.config.stages.filter(isImageStage);
+  const missingImageIndex = preview.config.stages.findIndex(
+    (stage) => isImageStage(stage) && props.document.assets.failed.includes(stage.assetId),
+  );
+  const transitionIndex = Math.max(
+    1,
+    imageStages.findIndex((stage) => stage.id === selectedId),
+  );
   const selectedTransition =
-    selectedIndex > 0
+    selectedStage && isImageStage(selectedStage)
       ? preview.config.transitions.find(
           (transition) =>
-            transition.fromStageId === preview.config.stages[selectedIndex - 1]?.id &&
-            transition.toStageId === selectedStage?.id,
+            transition.fromStageId === imageStages[transitionIndex - 1]?.id &&
+            transition.toStageId === imageStages[transitionIndex]?.id,
         )
-      : preview.config.transitions[0];
-  const validation = validateBuildingAnimationConfig(preview.config);
-
+      : undefined;
+  const validation = useMemo(
+    () => validateBuildingAnimationConfig(preview.config),
+    [preview.config],
+  );
   useEffect(() => {
-    if (!playing) return;
-    const tick = (now: number) => {
-      const elapsed = lastTimeRef.current ? (now - lastTimeRef.current) / 1000 : 0;
-      lastTimeRef.current = now;
-      const current = previewRef.current;
-      const timeline = current.config.timeline;
-      const next = current.progress + (elapsed * speed) / timeline.durationSeconds;
-      if (next >= timeline.workAreaEnd) {
-        if (loop) onPreview({ ...current, progress: timeline.workAreaStart });
-        else {
-          onPreview({ ...current, progress: timeline.workAreaEnd });
-          setPlaying(false);
-        }
-      } else onPreview({ ...current, progress: next });
-      frameRef.current = requestAnimationFrame(tick);
-    };
-    frameRef.current = requestAnimationFrame(tick);
-    return () => {
-      if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
-      frameRef.current = null;
-      lastTimeRef.current = 0;
-    };
-  }, [loop, onPreview, playing, speed]);
+    const list = stageList.current;
+    const card = [...(list?.querySelectorAll<HTMLElement>('.stage-card') ?? [])].find(
+      (item) => item.dataset.stageId === selectedId,
+    );
+    if (!list || !card) return;
+    if (card.offsetTop < list.scrollTop) list.scrollTop = card.offsetTop;
+    else if (card.offsetTop + card.offsetHeight > list.scrollTop + list.clientHeight)
+      list.scrollTop = card.offsetTop + card.offsetHeight - list.clientHeight;
+  }, [selectedId, layerSequence]);
+
+  useEffect(
+    () => () => {
+      importRevision.current++;
+    },
+    [],
+  );
+  useEffect(() => {
+    if (
+      preview.onionSkinStageIndex !== null &&
+      preview.onionSkinStageIndex !== Math.max(0, selectedIndex - 1)
+    )
+      onPreview({ ...preview, onionSkinStageIndex: Math.max(0, selectedIndex - 1) });
+  }, [selectedIndex, preview, onPreview]);
 
   useEffect(() => {
     const onSpace = (event: globalThis.KeyboardEvent) => {
       if (event.code !== 'Space' || event.repeat || event.ctrlKey || event.metaKey || event.altKey)
         return;
       const target = event.target as HTMLElement | null;
-      if (target?.closest('input, textarea, select, [contenteditable="true"]')) return;
+      if (target?.closest('input, textarea, select, button, [contenteditable="true"]')) return;
       event.preventDefault();
       const current = previewRef.current;
       if (
@@ -194,7 +276,7 @@ export function AnimationSandbox(props: Props) {
     };
     window.addEventListener('keydown', onSpace);
     return () => window.removeEventListener('keydown', onSpace);
-  }, [onPreview, playing]);
+  }, [onPreview, playing, setPlaying]);
 
   useEffect(() => {
     if (!placing) return;
@@ -208,104 +290,111 @@ export function AnimationSandbox(props: Props) {
     return () => window.removeEventListener('keydown', cancelPlacement);
   }, [onPreview, placing]);
 
-  const setConfig = (config: BuildingAnimationConfig) => onPreview({ ...preview, config });
-  const updateConfig = (update: (config: BuildingAnimationConfig) => void) => {
+  const setConfig = (config: BuildingAnimationConfig, record = true) =>
+    onPreview({ ...previewRef.current, config }, record);
+  const updateConfig = (update: (config: BuildingAnimationConfig) => void, record = true) => {
     const config = structuredClone(preview.config);
     update(config);
-    setConfig(config);
+    setConfig(config, record);
   };
   const updateStage = (patch: Partial<BuildingAnimationStage>) =>
     updateConfig((config) => {
-      const time = Math.min(
-        1,
-        Math.max(
-          0,
-          Math.round(
-            preview.progress * config.timeline.durationSeconds * config.timeline.frameRate,
-          ) /
-            (config.timeline.durationSeconds * config.timeline.frameRate),
-        ),
-      );
       for (const index of selectedIndices) {
         const stage = config.stages[index];
         if (stage) {
-          Object.assign(stage, patch);
-          if (patch.scale !== undefined) {
-            stage.scaleX = patch.scale;
-            stage.scaleY = patch.scale;
+          if (stage.locked) {
+            if (patch.locked !== undefined) stage.locked = patch.locked;
+            if (patch.hidden !== undefined) stage.hidden = patch.hidden;
+            if (patch.solo !== undefined) stage.solo = patch.solo;
+            continue;
           }
           const keyed =
-            patch.scale !== undefined ? { scaleX: stage.scaleX, scaleY: stage.scaleY } : patch;
+            patch.scale !== undefined ? { scaleX: patch.scale, scaleY: patch.scale } : patch;
+          if (patch.name !== undefined && patch.name.trim()) stage.name = patch.name.trim();
+          if (patch.milestone !== undefined) stage.milestone = patch.milestone;
+          if (patch.color !== undefined) stage.color = patch.color;
+          if (patch.seed !== undefined) stage.seed = patch.seed;
+          if (patch.enabled !== undefined) stage.enabled = patch.enabled;
+          if (
+            patch.coordinateSpace !== undefined &&
+            patch.coordinateSpace !== stage.coordinateSpace &&
+            stage.kind === 'filter' &&
+            stage.parentId
+          ) {
+            changeEffectCenterSpace(config, stage, patch.coordinateSpace, preview.progress);
+          }
           for (const property of [
-            'x',
-            'y',
-            'scaleX',
-            'scaleY',
-            'rotation',
-            'opacity',
-            'skewX',
-            'skewY',
-            'pivotX',
-            'pivotY',
-          ] as BuildingAnimationTrackProperty[]) {
+            'hidden',
+            'solo',
+            'locked',
+            'coordinateSpace',
+            'particleSpace',
+            'gravitySpace',
+            'emissionMode',
+            'endBehavior',
+            'burstCount',
+            'prewarmSeconds',
+            'particleBudget',
+            'emitterShape',
+            'shapeSourceId',
+            'particleTextureId',
+            'spriteColumns',
+            'spriteRows',
+            'blendMode',
+            'sizeCurve',
+            'alphaCurve',
+            'colorCurve',
+          ] as const) {
+            if (Object.hasOwn(patch, property))
+              Object.assign(stage, { [property]: patch[property] });
+          }
+          if (patch.parentId !== undefined && stage.kind === 'filter') {
+            stage.parentId = patch.parentId;
+            normalizeAnimationLayers(config);
+          }
+          for (const property of stageTrackProperties(stage)) {
             const value = keyed[property];
             if (value === undefined) continue;
-            let track = config.tracks.find(
-              (candidate) => candidate.stageId === stage.id && candidate.property === property,
+            editAnimationValue(
+              config,
+              stage.id,
+              property,
+              value,
+              preview.progress,
+              props.document.snap,
+              props.document.autoKey,
             );
-            if (!track) {
-              track = { stageId: stage.id, property, keys: [] };
-              config.tracks.push(track);
-            }
-            const existing = track.keys.find((key) => Math.abs(key.time - time) < 0.00001);
-            if (existing) existing.value = value;
-            else {
-              track.keys.push({
-                id: `key-${crypto.randomUUID()}`,
-                time,
-                value,
-                interpolation: 'linear',
-                bezier: [0.4, 0, 0.2, 1],
-              });
-              track.keys.sort((left, right) => left.time - right.time);
-            }
           }
         }
       }
     });
-  const updateTransition = (patch: Partial<BuildingAnimationTransition>) => {
-    if (!selectedTransition) return;
+  const updateTransition = (patch: Partial<BuildingAnimationTransition>, record = true) => {
+    if (!selectedTransition || selectedStage?.locked) return;
     updateConfig((config) => {
+      const images = config.stages.filter(isImageStage);
       const stageIndices = isMultiSelection
-        ? selectedIndices.filter((index) => index > 0)
-        : [Math.max(1, selectedIndex)];
+        ? selectedIndices
+            .map((index) => images.findIndex((stage) => stage.id === config.stages[index]?.id))
+            .filter((index) => index > 0)
+        : [transitionIndex];
       for (const index of stageIndices) {
         const transition = config.transitions.find(
           (candidate) =>
-            candidate.fromStageId === config.stages[index - 1]?.id &&
-            candidate.toStageId === config.stages[index]?.id,
+            candidate.fromStageId === images[index - 1]?.id &&
+            candidate.toStageId === images[index]?.id,
         );
         if (transition) Object.assign(transition, patch);
       }
-    });
+    }, record);
   };
   const renameAssetId = (assetId: string) => {
     if (!selectedStage || isMultiSelection) return;
-    const sourceUrls = { ...preview.sourceUrls };
-    const localUrl = sourceUrls[selectedStage.assetId];
-    if (localUrl) {
-      delete sourceUrls[selectedStage.assetId];
-      sourceUrls[assetId] = localUrl;
+    try {
+      onPreview(renameAnimationAsset(preview, selectedStage.id, assetId));
+      setImportError('');
+    } catch (error) {
+      setImportError(error instanceof Error ? error.message : 'Invalid Asset ID.');
     }
-    const config = structuredClone(preview.config);
-    const stage = config.stages[selectedIndex];
-    if (stage) stage.assetId = assetId;
-    onPreview({
-      ...preview,
-      config,
-      sourceUrls,
-      sourceRevision: preview.sourceRevision + (localUrl ? 1 : 0),
-    });
   };
 
   const selectStage = (event: ReactMouseEvent<HTMLButtonElement>, index: number) => {
@@ -329,14 +418,16 @@ export function AnimationSandbox(props: Props) {
     setSelectedIndices([index]);
   };
 
-  const importPngs = async (files: FileList | null) => {
+  const importPngs = async (files: FileList | File[] | null, mode: 'add' | 'replace' = 'add') => {
     if (!files?.length) return;
+    if (!props.document.ready) return;
     const pngs = [...files].filter((file) => file.type === 'image/png');
-    if (!pngs.length) return;
-    if (pngs.length < 2) {
-      setImportError('Select at least two PNG stages.');
+    if (!pngs.length) {
+      setImportError('Выберите файлы PNG.');
       return;
     }
+    setPlaying(false);
+    setImporting(true);
     const revision = ++importRevision.current;
     const initialConfig = previewRef.current.config;
     let inspected: Awaited<ReturnType<typeof inspectPngAlpha>>[];
@@ -345,65 +436,37 @@ export function AnimationSandbox(props: Props) {
     } catch (error) {
       if (revision === importRevision.current)
         setImportError(error instanceof Error ? error.message : 'Unable to read PNG stages.');
+      if (revision === importRevision.current) setImporting(false);
       return;
     }
-    if (revision !== importRevision.current || previewRef.current.config !== initialConfig) return;
-    const current = previewRef.current;
-    const sourceUrls = { ...current.sourceUrls };
-    const usedAssetIds = new Set<string>();
-    const stages = inspected.map(({ file }, index) => {
-      const base = slug(file.name);
-      let assetId = `buildings/${base}.png`;
-      let suffix = 2;
-      while (usedAssetIds.has(assetId)) assetId = `buildings/${base}-${suffix++}.png`;
-      usedAssetIds.add(assetId);
-      const previousUrl = sourceUrls[assetId];
-      if (previousUrl?.startsWith('blob:')) URL.revokeObjectURL(previousUrl);
-      sourceUrls[assetId] = URL.createObjectURL(file);
-      return {
-        id: `stage-${base}-${index + 1}`,
-        name: file.name,
-        assetId,
-        milestone: pngs.length === 1 ? 0 : Number(((index / (pngs.length - 1)) * 0.85).toFixed(3)),
-        inPoint: 0,
-        outPoint: 1,
-        layerOrder: pngs.length - 1 - index,
-        x: 0,
-        y: 0,
-        scale: 1,
-        scaleX: 1,
-        scaleY: 1,
-        rotation: 0,
-        opacity: 1,
-        skewX: 0,
-        skewY: 0,
-        pivotX: 0,
-        pivotY: 0,
-      };
-    });
-    for (const [index, stage] of stages.entries()) {
-      stage.inPoint = stages[index - 1]?.milestone ?? 0;
-      stage.outPoint = stages[index + 1]?.milestone ?? 1;
+    if (revision !== importRevision.current) return;
+    setImporting(false);
+    if (previewRef.current.config !== initialConfig) {
+      setImportError('Import cancelled because the document changed. Please retry.');
+      return;
     }
-    const config = structuredClone(current.config);
-    const finalImage = inspected[inspected.length - 1]!;
-    const alphaBounds = finalImage.bounds;
-    const widthMeters = config.worldSize.widthMeters;
-    config.canvas = { width: finalImage.width, height: finalImage.height };
-    config.alphaBounds = { ...alphaBounds };
-    config.hitbox = { ...alphaBounds, scaleX: 1, scaleY: 1 };
-    config.origin = {
-      x: alphaBounds.x + alphaBounds.width / 2,
-      y: alphaBounds.y + alphaBounds.height,
-    };
-    config.worldSize = {
-      widthMeters,
-      heightMeters: widthMeters * (alphaBounds.height / alphaBounds.width),
-    };
-    config.stages = stages;
-    config.tracks = [];
-    config.transitions = transitionsFor(stages, config.transitions);
-    setSelectedIndices([0]);
+    const current = previewRef.current;
+    const sourceUrls: Record<string, string> = { ...current.sourceUrls };
+    let imported: ReturnType<typeof importAnimationImages>;
+    try {
+      imported = importAnimationImages(
+        current.config,
+        inspected.map((image) => ({ ...image, name: image.file.name })),
+        activeAnimationId,
+        mode,
+        animationLibraryAssetIds(props.document.preview.library),
+      );
+    } catch (reason) {
+      setImportError(reason instanceof Error ? reason.message : 'PNG import failed.');
+      return;
+    }
+    const { config, stages } = imported;
+    inspected.forEach(({ file }, index) => {
+      sourceUrls[stages[index]!.assetId] = props.document.createSource(file);
+    });
+    const importedId = stages[0]!.id;
+    props.document.session.view(activeAnimationId).selectedLayerIds = [importedId];
+    setLayerSelections((selection) => ({ ...selection, [activeAnimationId]: [importedId] }));
     setImportError('');
     onPreview({
       ...current,
@@ -416,15 +479,88 @@ export function AnimationSandbox(props: Props) {
   };
 
   const moveStage = (offset: number) => {
-    if (isMultiSelection) return;
-    const targetOrder = selectedLayerOrder + offset;
-    if (targetOrder < 0 || targetOrder >= preview.config.stages.length) return;
+    if (isMultiSelection || !selectedStage || selectedStage.locked) return;
+    const siblings = orderedStageEntries.filter(({ stage }) =>
+      selectedStage.kind === 'filter'
+        ? stage.kind === 'filter' && stage.parentId === selectedStage.parentId
+        : stage.kind !== 'filter',
+    );
+    const target =
+      siblings[siblings.findIndex(({ stage }) => stage.id === selectedStage.id) + offset];
+    if (!target) return;
     const config = structuredClone(preview.config);
-    const stage = config.stages[selectedIndex];
-    const other = config.stages.find((candidate) => candidate.layerOrder === targetOrder);
-    if (!stage || !other) return;
-    other.layerOrder = stage.layerOrder;
-    stage.layerOrder = targetOrder;
+    reorderAnimationLayer(config, selectedStage.id, target.stage.id);
+    setConfig(config);
+  };
+
+  const addEffect: AddAnimationEffect = (kind, variant) => {
+    const config = structuredClone(previewRef.current.config);
+    const parentId = selectedStage?.kind === 'filter' ? selectedStage.parentId : selectedStage?.id;
+    if (kind === 'filter' && (!parentId || isMultiSelection)) return;
+    const stage = createAnimationEffectStage(
+      config,
+      `fx-${crypto.randomUUID()}`,
+      kind,
+      variant,
+      kind === 'filter' ? parentId : undefined,
+      preview.progress,
+    );
+    config.stages.push(stage);
+    normalizeAnimationLayers(config);
+    setPlaying(false);
+    setTimelineMode('animation');
+    props.document.session.view(activeAnimationId).selectedLayerIds = [stage.id];
+    setLayerSelections((selection) => ({ ...selection, [activeAnimationId]: [stage.id] }));
+    onPreview({ ...previewRef.current, config, visible: true });
+    effectPalette.current?.hidePopover();
+  };
+
+  const applyPreset = (preset: AnimationEffectPreset | string) => {
+    const config = structuredClone(previewRef.current.config);
+    const parentId = selectedStage?.parentId ?? selectedId;
+    const id =
+      typeof preset === 'string'
+        ? addBuiltinEffectPreset(config, preset, preview.progress, parentId)
+        : applyAnimationPreset(config, preset, preview.progress, parentId);
+    if (!id) return;
+    props.document.session.view(activeAnimationId).selectedLayerIds = [id];
+    setLayerSelections((selection) => ({ ...selection, [activeAnimationId]: [id] }));
+    setPlaying(false);
+    setTimelineMode('animation');
+    setConfig(config);
+  };
+  const importParticleTexture = (file: File) => {
+    if (!selectedId || selectedStage?.locked) return;
+    const config = structuredClone(previewRef.current.config),
+      stage = config.stages.find((item) => item.id === selectedId)!;
+    const assetId = `particles/${crypto.randomUUID()}/${file.name}`;
+    stage.particleTextureId = assetId;
+    onPreview({
+      ...previewRef.current,
+      config,
+      sourceUrls: {
+        ...previewRef.current.sourceUrls,
+        [assetId]: props.document.createSource(file),
+      },
+      sourceRevision: previewRef.current.sourceRevision + 1,
+    });
+  };
+
+  const removeSelected = () => {
+    if (selectedIndices.some((index) => preview.config.stages[index]?.locked)) return;
+    const config = structuredClone(preview.config);
+    removeAnimationLayers(
+      config,
+      selectedIndices.map((index) => config.stages[index]!.id),
+    );
+    if (!config.stages.length) return;
+    const firstImage = config.stages.find(isImageStage);
+    if (firstImage) firstImage.milestone = 0;
+    config.transitions = transitionsFor(config.stages, config.transitions);
+    setPlaying(false);
+    const ids = [config.stages[0]!.id];
+    props.document.session.view(activeAnimationId).selectedLayerIds = ids;
+    setLayerSelections((current) => ({ ...current, [activeAnimationId]: ids }));
     setConfig(config);
   };
 
@@ -439,21 +575,93 @@ export function AnimationSandbox(props: Props) {
     URL.revokeObjectURL(url);
   };
 
+  const exportEntity = () => {
+    const library = props.document.preview.library;
+    const blob = new Blob([JSON.stringify(library, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `${slug(library.entityId)}.animations.json`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  };
+
   const importJson = async (file?: File) => {
-    if (!file) return;
+    if (!file || !props.document.ready) return;
+    setPlaying(false);
+    setImporting(true);
     const revision = ++importRevision.current;
     const initialConfig = previewRef.current.config;
     try {
-      const config = loadBuildingAnimationConfig(JSON.parse(await file.text()));
-      if (revision !== importRevision.current || previewRef.current.config !== initialConfig)
+      const value: unknown = JSON.parse(await file.text());
+      const library =
+        value && typeof value === 'object' && 'libraryVersion' in value
+          ? loadBuildingAnimationLibrary(value)
+          : undefined;
+      const config = library ? library.animations[0]!.config : loadBuildingAnimationConfig(value);
+      if (revision !== importRevision.current) return;
+      if (previewRef.current.config !== initialConfig) {
+        setImportError('Import cancelled because the document changed. Please retry.');
         return;
+      }
       const current = previewRef.current;
-      setSelectedIndices([0]);
+      const targetId = library?.animations[0]!.id ?? activeAnimationId;
+      const ids = [config.stages[0]!.id];
+      props.document.session.view(targetId).selectedLayerIds = ids;
+      setLayerSelections((current) => ({ ...current, [targetId]: ids }));
       setImportError('');
-      onPreview({ ...current, config, progress: 0, sourceRevision: current.sourceRevision + 1 });
+      if (library) {
+        props.document.editLibrary(library, library.animations[0]!.id);
+        return;
+      }
+      const sourceUrls: Record<string, string> = { ...current.sourceUrls };
+      for (const stage of config.stages) {
+        const url = current.sourceUrls[stage.assetId];
+        if (url) sourceUrls[stage.assetId] = url;
+      }
+      onPreview({
+        ...current,
+        config,
+        sourceUrls,
+        progress: 0,
+        visible: true,
+        sourceRevision: current.sourceRevision + 1,
+      });
     } catch (error) {
       if (revision === importRevision.current)
         setImportError(error instanceof Error ? error.message : 'Invalid JSON.');
+    } finally {
+      if (revision === importRevision.current) setImporting(false);
+    }
+  };
+
+  const relinkPng = async (file?: File) => {
+    if (!file || !selectedStage || file.type !== 'image/png') return;
+    const stageId = selectedStage.id;
+    const initialConfig = previewRef.current.config;
+    const revision = ++importRevision.current;
+    setImporting(true);
+    try {
+      await inspectPngAlpha(file);
+      if (revision !== importRevision.current) return;
+      const current = previewRef.current;
+      if (current.config !== initialConfig)
+        throw new Error('Document changed; select the PNG again.');
+      const stage = current.config.stages.find((item) => item.id === stageId);
+      if (!stage) return;
+      onPreview({
+        ...current,
+        config: structuredClone(current.config),
+        visible: true,
+        sourceUrls: { ...current.sourceUrls, [stage.assetId]: props.document.createSource(file) },
+        sourceRevision: current.sourceRevision + 1,
+      });
+      setImportError('');
+    } catch (error) {
+      if (revision === importRevision.current)
+        setImportError(error instanceof Error ? error.message : 'PNG relink failed.');
+    } finally {
+      if (revision === importRevision.current) setImporting(false);
     }
   };
 
@@ -506,28 +714,388 @@ export function AnimationSandbox(props: Props) {
   };
 
   return (
-    <main className="sandbox-workspace">
-      <div className="sandbox-title-row">
-        <div>
-          <span className="eyebrow">DEVELOPER TOOL / RENDER PIPELINE</span>
-          <h1>Animation Sandbox</h1>
-          <p>Сборка стадий материализации через production BuildingAnimationPlayer.</p>
+    <main
+      className="sandbox-workspace"
+      aria-busy={importing || !props.document.ready}
+      onFocusCapture={(event) => {
+        if (
+          (event.target as HTMLElement).matches(
+            'input[type="number"], input[type="range"], input[type="color"]',
+          )
+        )
+          setPlaying(false);
+      }}
+      onKeyDown={(event) => {
+        const target = event.target as HTMLElement;
+        if (target.closest('input, textarea, select, [contenteditable="true"], .ae-timeline'))
+          return;
+        if ((event.ctrlKey || event.metaKey) && (event.code === 'KeyZ' || event.code === 'KeyY')) {
+          event.preventDefault();
+          if (event.code === 'KeyY' || event.shiftKey) props.document.redo();
+          else props.document.undo();
+        }
+      }}
+    >
+      <h1 className="sandbox-visually-hidden" id="animation-sandbox-title">
+        Animation Sandbox
+      </h1>
+      {!toolbarHidden ? (
+        <div className="sandbox-topbar" aria-label="Панель редактора анимаций">
+          <details
+            className="sandbox-topbar-menu sandbox-app-menu"
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') event.currentTarget.open = false;
+            }}
+          >
+            <summary>BALLISTICS / LAB · ANIMATION</summary>
+            <div className="sandbox-topbar-popover">
+              <button type="button" onClick={props.onOpenGame}>
+                Открыть Game
+              </button>
+              <span>Animation Sandbox</span>
+            </div>
+          </details>
+          <details
+            className="sandbox-topbar-menu sandbox-file-menu"
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') event.currentTarget.open = false;
+            }}
+          >
+            <summary>Файл</summary>
+            <div className="sandbox-topbar-popover document-actions">
+              <button
+                disabled={importing || !props.document.ready}
+                onClick={() => importRef.current?.click()}
+              >
+                Import JSON
+              </button>
+              <button disabled={!validation.valid} onClick={exportJson}>
+                Export Animation JSON
+              </button>
+              <button disabled={!props.document.ready} onClick={exportEntity}>
+                Export Entity JSON
+              </button>
+              <small>JSON содержит ссылки на ресурсы. PNG и звук сохраняйте отдельно.</small>
+            </div>
+          </details>
+          <AnimationTabs document={props.document} />
+          <details
+            className="sandbox-topbar-menu sandbox-status-menu"
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') event.currentTarget.open = false;
+            }}
+          >
+            <summary
+              className={
+                !validation.valid || props.document.assets.failed.length ? 'has-missing-assets' : ''
+              }
+            >
+              {!validation.valid
+                ? '● Ошибка структуры'
+                : props.document.assets.failed.length
+                  ? `● Нет ресурсов: ${props.document.assets.failed.length}`
+                  : props.document.assets.loading
+                    ? '● Загрузка ресурсов'
+                    : '● Готово'}
+            </summary>
+            <div className="sandbox-topbar-popover document-status" role="status">
+              <span>{props.document.draftStatus}</span>
+              <span>Структура: {validation.valid ? 'корректна' : 'ошибка'}</span>
+              <span className={props.document.assets.failed.length ? 'has-missing-assets' : ''}>
+                Ресурсы: {props.document.assets.loaded.length}/
+                {animationTextureAssets(preview.config).length}
+                {props.document.assets.loading
+                  ? ' · загрузка'
+                  : props.document.assets.failed.length
+                    ? ' · отсутствуют'
+                    : ''}
+              </span>
+            </div>
+          </details>
+          <button
+            className="sandbox-hide-toolbar"
+            type="button"
+            onClick={() => setToolbarHidden(true)}
+            title="Скрыть верхнюю панель"
+            aria-label="Скрыть верхнюю панель"
+          >
+            ▴
+          </button>
         </div>
-        <label className="sandbox-id-field">
-          SCHEMA <b>v{preview.config.schemaVersion}</b>
-          <span>
-            CONFIG
-            <input
-              value={preview.config.id}
-              onChange={(event) => updateConfig((config) => (config.id = event.target.value))}
-            />
-          </span>
-        </label>
-      </div>
+      ) : null}
 
-      <div className="sandbox-grid">
+      <div
+        className="sandbox-grid"
+        ref={gridRef}
+        style={{ '--timeline-height': `${timelineHeight}px` } as CSSProperties}
+        id="animation-editor-panel"
+        role="tabpanel"
+        aria-labelledby={
+          toolbarHidden
+            ? 'animation-sandbox-title'
+            : `animation-tab-${props.document.preview.activeAnimationId}`
+        }
+      >
+        <section className="sandbox-panel resource-panel" aria-label="Слои">
+          <header className="resource-heading">
+            <h2>Слои</h2>
+            <span>{preview.config.stages.length}</span>
+          </header>
+          <div className="stage-order-label">LAYER STACK / TRANSITION</div>
+          <div className="stage-list" ref={stageList}>
+            {orderedStageEntries.map(({ stage, index }) => (
+              <button
+                className={`stage-card ${selectedIndices.includes(index) ? 'is-selected' : ''} ${stage.kind === 'filter' ? 'is-dependent' : ''} ${stage.id === selectedStage?.parentId || stage.parentId === selectedId ? 'is-related' : ''}`}
+                key={stage.id}
+                data-stage-id={stage.id}
+                aria-pressed={selectedIndices.includes(index)}
+                onClick={(event) => selectStage(event, index)}
+              >
+                <span className="stage-select-mark">
+                  {selectedIndices.includes(index) ? '✓' : ''}
+                </span>
+                <span className="stage-grip">⋮⋮</span>
+                <span className="stage-thumb">
+                  {isImageStage(stage) ? (
+                    <img
+                      src={preview.sourceUrls[stage.assetId] ?? stage.assetId}
+                      alt=""
+                      onError={(event) => {
+                        event.currentTarget.style.visibility = 'hidden';
+                      }}
+                      onLoad={(event) => {
+                        event.currentTarget.style.visibility = 'visible';
+                      }}
+                    />
+                  ) : (
+                    <b>{stage.kind === 'filter' ? 'ƒx' : stage.kind === 'particles' ? '✦' : '☀'}</b>
+                  )}
+                </span>
+                <span className="stage-card-copy">
+                  <strong>{stage.name}</strong>
+                  <small>
+                    {props.document.assets.failed.includes(stage.assetId) ||
+                    (stage.particleTextureId &&
+                      props.document.assets.failed.includes(stage.particleTextureId)) ? (
+                      <span className="missing-asset-badge">PNG отсутствует · </span>
+                    ) : null}
+                    {stage.kind === 'filter'
+                      ? `↳ ${preview.config.stages.find((parent) => parent.id === stage.parentId)?.name}`
+                      : isImageStage(stage)
+                        ? `${(stage.milestone * preview.config.timeline.durationSeconds).toFixed(2)} s · ${stage.assetId}`
+                        : `${stage.kind} · procedural`}
+                  </small>
+                </span>
+              </button>
+            ))}
+          </div>
+
+          <label
+            className="png-drop"
+            onDragOver={(event) => event.preventDefault()}
+            onDrop={(event) => {
+              event.preventDefault();
+              void importPngs([...event.dataTransfer.files]);
+            }}
+          >
+            <strong>＋ Добавить PNG-стадии</strong>
+            <small>Сохраняет существующие слои и ключи</small>
+            <input
+              type="file"
+              accept="image/png"
+              multiple
+              disabled={importing || !props.document.ready}
+              onChange={(event) => {
+                void importPngs(event.target.files);
+                event.target.value = '';
+              }}
+            />
+          </label>
+          <button popoverTarget="animation-effect-palette" aria-haspopup="dialog">
+            Добавить эффект / пресет
+          </button>
+          <div
+            className="resource-palette"
+            id="animation-effect-palette"
+            popover="auto"
+            ref={effectPalette}
+            role="dialog"
+            aria-labelledby="animation-effect-palette-title"
+          >
+            <header>
+              <h3 id="animation-effect-palette-title">Добавить эффект / пресет</h3>
+              <button
+                popoverTarget="animation-effect-palette"
+                popoverTargetAction="hide"
+                aria-label="Закрыть палитру эффектов"
+              >
+                ×
+              </button>
+            </header>
+            <AnimationEffectPalette
+              onAdd={addEffect}
+              canAttach={!!selectedStage && !selectedStage.locked && !isMultiSelection}
+              disabled={importing || !props.document.ready}
+            />
+            <div className="animation-effect-presets">
+              <strong>RTS PRESETS</strong>
+              <div>
+                {builtinEffectPresets.map((preset) => (
+                  <button
+                    key={preset.id}
+                    disabled={
+                      !props.document.ready ||
+                      (['construction', 'shield'].includes(preset.id) &&
+                        (!selectedStage || selectedStage.locked))
+                    }
+                    onClick={() => {
+                      applyPreset(preset.id);
+                      effectPalette.current?.hidePopover();
+                    }}
+                  >
+                    {preset.name}
+                  </button>
+                ))}
+              </div>
+              {(preview.config.effectPresets ?? []).map((preset) => (
+                <div key={preset.id}>
+                  <button
+                    onClick={() => {
+                      applyPreset(preset);
+                      effectPalette.current?.hidePopover();
+                    }}
+                  >
+                    {preset.name}
+                  </button>
+                  <button
+                    aria-label={`Delete preset ${preset.name}`}
+                    onClick={() =>
+                      updateConfig((config) => {
+                        config.effectPresets = config.effectPresets?.filter(
+                          (item) => item.id !== preset.id,
+                        );
+                      })
+                    }
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+          <details className="resource-layer-actions">
+            <summary>Другие действия со слоями</summary>
+            <div className="stage-reorder">
+              <button
+                onClick={() => moveStage(-1)}
+                disabled={isMultiSelection || selectedLayerOrder === 0}
+              >
+                ↑ Вперёд
+              </button>
+              <button
+                onClick={() => moveStage(1)}
+                disabled={
+                  isMultiSelection || selectedLayerOrder === preview.config.stages.length - 1
+                }
+              >
+                ↓ Назад
+              </button>
+            </div>
+            <button
+              onClick={removeSelected}
+              disabled={
+                !preview.config.stages.some(
+                  (stage, index) =>
+                    !selectedIndices.includes(index) &&
+                    !selectedIndices.some(
+                      (selected) => preview.config.stages[selected]?.id === stage.parentId,
+                    ),
+                )
+              }
+            >
+              Удалить слои и их эффекты
+            </button>
+            <details className="resource-replace">
+              <summary>Заменить набор изображений…</summary>
+              <p>
+                Заменяет все PNG-стадии и их ключи; сохраняет самостоятельные эффекты, звук и
+                маркеры. Undo восстанавливает замену.
+              </p>
+              <label className="png-drop">
+                Выбрать PNG для замены
+                <input
+                  type="file"
+                  accept="image/png"
+                  multiple
+                  disabled={importing || !props.document.ready}
+                  onChange={(event) => {
+                    void importPngs(event.target.files, 'replace');
+                    event.target.value = '';
+                  }}
+                />
+              </label>
+            </details>{' '}
+            <details className="source-status">
+              <summary>
+                Ресурсы · {props.document.assets.loaded.length}/
+                {animationTextureAssets(preview.config).length}
+              </summary>
+              <span>РЕСУРСЫ</span>
+              <p>
+                Импортированные PNG и звук <b>сохраняются вместе с локальным черновиком</b>
+              </p>
+              <p>
+                JSON <strong>содержит только ссылки</strong>
+              </p>
+              <p role="status">
+                Textures: {props.document.assets.loaded.length}/
+                {animationTextureAssets(preview.config).length}
+                {props.document.assets.loading
+                  ? ' · loading'
+                  : !preview.visible
+                    ? ' · preview hidden'
+                    : ''}
+              </p>
+              {props.document.assets.failed.length ? (
+                <p role="alert">Missing: {props.document.assets.failed.join(', ')}</p>
+              ) : null}
+              <button
+                disabled={
+                  !selectedStage ||
+                  !isImageStage(selectedStage) ||
+                  isMultiSelection ||
+                  importing ||
+                  !props.document.ready
+                }
+                onClick={() => relinkRef.current?.click()}
+              >
+                Заменить PNG выбранного слоя…
+              </button>
+              <input
+                ref={relinkRef}
+                className="hidden-input"
+                type="file"
+                accept="image/png"
+                onChange={(event) => {
+                  void relinkPng(event.target.files?.[0]);
+                  event.target.value = '';
+                }}
+              />
+            </details>
+          </details>
+        </section>
+
         <section className="sandbox-preview sandbox-panel">
           <div className="preview-toolbar">
+            {toolbarHidden ? (
+              <button
+                type="button"
+                onClick={() => setToolbarHidden(false)}
+                aria-label="Показать верхнюю панель"
+              >
+                ☰ Меню
+              </button>
+            ) : null}
             <span>
               <i /> PREVIEW / PRODUCTION RENDERER <b>LIVE</b>
             </span>
@@ -546,6 +1114,25 @@ export function AnimationSandbox(props: Props) {
               />{' '}
               ONION SKIN
             </label>
+            <label>
+              <input
+                type="checkbox"
+                checked={showOrigins}
+                onChange={(event) => setShowOrigins(event.target.checked)}
+              />{' '}
+              ORIGINS
+            </label>
+            <button
+              onClick={() => {
+                const world = props.runtime.getConfig().world;
+                props.controls.camera.moveTo(
+                  preview.position ?? { x: world.widthMeters / 2, y: world.heightMeters / 2 },
+                );
+                onPreview({ ...preview, visible: true });
+              }}
+            >
+              Focus building
+            </button>
           </div>
           <div className="sandbox-game-frame">
             <GameCanvas
@@ -557,9 +1144,24 @@ export function AnimationSandbox(props: Props) {
               terrainSmoothing={props.terrainSmoothing}
               terrainTexture={props.terrainTexture}
               buildingPreview={preview}
+              onBuildingAssets={props.document.onAssets}
               onToggleTerrainDebug={props.onToggleTerrainDebug}
               onPause={props.onPause}
               onReset={props.onReset}
+            />
+            <AnimationOriginOverlay
+              preview={preview}
+              runtime={props.runtime}
+              controls={props.controls}
+              selectedId={selectedId}
+              placing={placing}
+              visible={showOrigins}
+              snap={props.document.snap}
+              autoKey={props.document.autoKey}
+              onSelect={(index) => setSelectedIndices([index])}
+              onPause={() => setPlaying(false)}
+              onRemember={props.document.remember}
+              onConfig={(config) => setConfig(config, false)}
             />
             <div
               className={`building-placement-layer ${placing ? 'is-active' : ''}`}
@@ -569,8 +1171,44 @@ export function AnimationSandbox(props: Props) {
             >
               {placing ? <span>CLICK TO PLACE · ESC CANCEL</span> : null}
             </div>
-            <div className="preview-origin">ORIGIN / TERRAIN CONTACT</div>
             <output className="preview-progress">PROGRESS {preview.progress.toFixed(3)}</output>
+            {!preview.visible ||
+            props.document.assets.failed.length > 0 ||
+            props.document.assets.loading ? (
+              <div className="preview-empty-state" role="status">
+                {!preview.visible ? (
+                  'Загрузите PNG-стадии или нажмите Spawn Test Building.'
+                ) : props.document.assets.loading ? (
+                  'Загрузка изображений…'
+                ) : (
+                  <>
+                    <span>
+                      Отсутствуют текстуры: {props.document.assets.failed.length}. Проверьте ресурсы
+                      слоёв.
+                    </span>
+                    {missingImageIndex >= 0 ? (
+                      <button
+                        disabled={importing || !props.document.ready}
+                        onClick={() => {
+                          const index =
+                            selectedStage &&
+                            isImageStage(selectedStage) &&
+                            props.document.assets.failed.includes(selectedStage.assetId)
+                              ? selectedIndex
+                              : missingImageIndex;
+                          if (index >= 0) {
+                            setSelectedIndices([index]);
+                            relinkRef.current?.click();
+                          }
+                        }}
+                      >
+                        Восстановить PNG…
+                      </button>
+                    ) : null}
+                  </>
+                )}
+              </div>
+            ) : null}
           </div>
           <div className="preview-meta">
             <span>REAL CAMERA · TERRAIN · WORLD SCALE</span>
@@ -579,555 +1217,725 @@ export function AnimationSandbox(props: Props) {
                 X <b>{preview.position?.x.toFixed(2) ?? 'AUTO'}</b> · Y{' '}
                 <b>{preview.position?.y.toFixed(2) ?? 'TERRAIN'}</b>
               </span>
-              <label>
-                WIDTH{' '}
-                <input
-                  type="number"
-                  min="0.5"
-                  step="0.1"
-                  value={preview.config.worldSize.widthMeters}
-                  onChange={(event) =>
-                    updateConfig(
-                      (config) => (config.worldSize.widthMeters = Number(event.target.value)),
-                    )
-                  }
-                />{' '}
-                m
-              </label>
-              <label>
-                HEIGHT{' '}
-                <input
-                  type="number"
-                  min="0.5"
-                  step="0.1"
-                  value={preview.config.worldSize.heightMeters}
-                  onChange={(event) =>
-                    updateConfig(
-                      (config) => (config.worldSize.heightMeters = Number(event.target.value)),
-                    )
-                  }
-                />{' '}
-                m
-              </label>
             </div>
+          </div>
+          <div className="preview-actions">
+            {' '}
+            <button className={placing ? 'is-placing' : ''} onClick={togglePlacement}>
+              {placing ? 'Cancel Placement' : 'Spawn Test Building'}
+            </button>
+            <button
+              onClick={() => {
+                onPreview({
+                  ...preview,
+                  progress: preview.config.timeline.workAreaStart,
+                  visible: true,
+                });
+                setPlaying(true);
+              }}
+            >
+              Restart Animation
+            </button>
+            <button
+              className="danger"
+              onClick={() => {
+                setPlaying(false);
+                onPreview({ ...preview, visible: false });
+              }}
+            >
+              Remove Test Building
+            </button>
+            <button
+              className="cyan"
+              onClick={() => {
+                onPreview({
+                  ...preview,
+                  visible: true,
+                  progress:
+                    preview.progress >= preview.config.timeline.workAreaEnd
+                      ? preview.config.timeline.workAreaStart
+                      : preview.progress,
+                });
+                setPlaying(true);
+                props.onOpenGame();
+              }}
+            >
+              Test In Game
+            </button>
           </div>
         </section>
 
-        <aside className="sandbox-panel inspector-panel">
-          <CollapsibleSection
-            className="inspector-stages"
-            heading="STAGES"
-            subheading={`Layers / sequence · ${String(preview.config.stages.length).padStart(2, '0')}`}
-          >
-            <label className="png-drop">
-              <strong>＋ Drop / browse PNG stages</strong>
-              <small>multiple files · local preview only</small>
-              <input
-                type="file"
-                accept="image/png"
-                multiple
-                onChange={(event) => void importPngs(event.target.files)}
-              />
-            </label>
-            <div className="stage-order-label">LAYER STACK / TRANSITION</div>
-            <div className="stage-list">
-              {orderedStageEntries.map(({ stage, index }) => (
-                <button
-                  className={`stage-card ${selectedIndices.includes(index) ? 'is-selected' : ''}`}
-                  key={stage.id}
-                  onClick={(event) => selectStage(event, index)}
-                >
-                  <span className="stage-select-mark">
-                    {selectedIndices.includes(index) ? '✓' : ''}
-                  </span>
-                  <span className="stage-grip">⋮⋮</span>
-                  <span className="stage-thumb">
-                    {preview.sourceUrls[stage.assetId] ? (
-                      <img src={preview.sourceUrls[stage.assetId]} alt="" />
-                    ) : (
-                      <i />
-                    )}
-                  </span>
-                  <span className="stage-card-copy">
-                    <strong>{stage.name}</strong>
-                    <small>
-                      {stage.milestone.toFixed(2)} · {stage.assetId}
-                    </small>
-                  </span>
-                </button>
-              ))}
-            </div>
-            <div className="stage-reorder">
-              <button
-                onClick={() => moveStage(-1)}
-                disabled={isMultiSelection || selectedLayerOrder === 0}
-              >
-                ↑ Front
-              </button>
-              <button
-                onClick={() => moveStage(1)}
-                disabled={
-                  isMultiSelection || selectedLayerOrder === preview.config.stages.length - 1
-                }
-              >
-                ↓ Back
-              </button>
-            </div>
-            <div className="source-status">
-              <span>SOURCE STATUS</span>
-              <p>
-                Object URL <b>local-only</b>
-              </p>
-              <p>
-                Asset IDs <strong>exportable</strong>
-              </p>
-            </div>
-          </CollapsibleSection>
-          {selectedStage ? (
-            <>
-              <CollapsibleSection
-                className="inspector-section"
-                heading="INSPECTOR"
-                subheading={
-                  isMultiSelection
-                    ? `${selectedIndices.length} stages selected`
-                    : selectedStage.name
-                }
-              >
-                {isMultiSelection ? (
-                  <span className="multi-selection-note">
-                    TRANSFORM VALUES APPLY TO ALL SELECTED FRAMES
-                  </span>
-                ) : null}
-                <label>
-                  NAME
-                  <input
-                    value={selectedStage.name}
-                    disabled={isMultiSelection}
-                    onChange={(event) => updateStage({ name: event.target.value })}
-                  />
-                </label>
-                <label>
-                  ASSET ID
-                  <input
-                    value={selectedStage.assetId}
-                    disabled={isMultiSelection}
-                    onChange={(event) => renameAssetId(event.target.value)}
-                  />
-                </label>
-                <div className="field-grid two">
-                  <PairedNumberField
-                    label="POSITION X, Y"
-                    first={selectedStage.x}
-                    second={selectedStage.y}
-                    onFirst={(x) => updateStage({ x })}
-                    onSecond={(y) => updateStage({ y })}
-                  />
-                  <PairedNumberField
-                    label="SCALE X, Y"
-                    first={selectedStage.scaleX}
-                    second={selectedStage.scaleY}
-                    step={0.01}
-                    onFirst={(scaleX) => updateStage({ scaleX })}
-                    onSecond={(scaleY) => updateStage({ scaleY })}
-                  />
-                  <PairedNumberField
-                    label="SKEW X, Y"
-                    first={selectedStage.skewX}
-                    second={selectedStage.skewY}
-                    step={0.01}
-                    onFirst={(skewX) => updateStage({ skewX })}
-                    onSecond={(skewY) => updateStage({ skewY })}
-                  />
-                  <PairedNumberField
-                    label="PIVOT X, Y"
-                    first={selectedStage.pivotX}
-                    second={selectedStage.pivotY}
-                    step={0.01}
-                    onFirst={(pivotX) => updateStage({ pivotX })}
-                    onSecond={(pivotY) => updateStage({ pivotY })}
-                  />
-                  <label>
-                    ROTATION
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={selectedStage.rotation}
-                      onChange={(event) => updateStage({ rotation: Number(event.target.value) })}
-                    />
-                  </label>
-                  <label>
-                    OPACITY
-                    <input
-                      type="number"
-                      min="0"
-                      max="1"
-                      step="0.01"
-                      value={selectedStage.opacity}
-                      onChange={(event) => updateStage({ opacity: Number(event.target.value) })}
-                    />
-                  </label>
-                  <label>
-                    MILESTONE
-                    <input
-                      type="number"
-                      min="0"
-                      max="1"
-                      step="0.01"
-                      value={selectedStage.milestone}
-                      disabled={isMultiSelection}
-                      onChange={(event) => updateStage({ milestone: Number(event.target.value) })}
-                    />
-                  </label>
-                </div>
-              </CollapsibleSection>
-              <CollapsibleSection
-                className="inspector-section canvas-fields"
-                heading="CANVAS / ORIGIN"
-              >
-                <div className="field-grid two">
-                  <label>
-                    W
-                    <input
-                      type="number"
-                      value={preview.config.canvas.width}
-                      onChange={(event) =>
-                        updateConfig((config) => (config.canvas.width = Number(event.target.value)))
-                      }
-                    />
-                  </label>
-                  <label>
-                    H
-                    <input
-                      type="number"
-                      value={preview.config.canvas.height}
-                      onChange={(event) =>
-                        updateConfig(
-                          (config) => (config.canvas.height = Number(event.target.value)),
-                        )
-                      }
-                    />
-                  </label>
-                  <PairedNumberField
-                    label="ORIGIN X, Y"
-                    first={preview.config.origin.x}
-                    second={preview.config.origin.y}
-                    onFirst={(x) => updateConfig((config) => (config.origin.x = x))}
-                    onSecond={(y) => updateConfig((config) => (config.origin.y = y))}
-                  />
-                </div>
-              </CollapsibleSection>
-              <CollapsibleSection
-                className="inspector-section hitbox-fields"
-                heading="HITBOX / ALPHA BOUNDS"
-              >
-                <label className="inline-check">
-                  <input
-                    type="checkbox"
-                    checked={preview.showHitbox}
-                    onChange={(event) =>
-                      onPreview({ ...preview, showHitbox: event.target.checked })
-                    }
-                  />
-                  SHOW IN PREVIEW
-                </label>
-                <div className="field-grid two">
-                  <PairedNumberField
-                    label="POSITION X, Y"
-                    first={preview.config.hitbox.x}
-                    second={preview.config.hitbox.y}
-                    onFirst={(x) => updateConfig((config) => (config.hitbox.x = x))}
-                    onSecond={(y) => updateConfig((config) => (config.hitbox.y = y))}
-                  />
-                  <label>
-                    W
-                    <input
-                      type="number"
-                      min="1"
-                      value={preview.config.hitbox.width}
-                      onChange={(event) =>
-                        updateConfig((config) => (config.hitbox.width = Number(event.target.value)))
-                      }
-                    />
-                  </label>
-                  <label>
-                    H
-                    <input
-                      type="number"
-                      min="1"
-                      value={preview.config.hitbox.height}
-                      onChange={(event) =>
-                        updateConfig(
-                          (config) => (config.hitbox.height = Number(event.target.value)),
-                        )
-                      }
-                    />
-                  </label>
-                </div>
-                <PairedNumberField
-                  label="SCALE X, Y"
-                  first={preview.config.hitbox.scaleX}
-                  second={preview.config.hitbox.scaleY}
-                  min={0.05}
-                  step={0.05}
-                  onFirst={(x) => updateConfig((config) => (config.hitbox.scaleX = x))}
-                  onSecond={(y) => updateConfig((config) => (config.hitbox.scaleY = y))}
-                />
-                <button
-                  className="inspector-reset"
-                  onClick={() =>
-                    updateConfig((config) => {
-                      config.hitbox = { ...config.alphaBounds, scaleX: 1, scaleY: 1 };
-                    })
-                  }
-                >
-                  Reset to alpha bounds
-                </button>
-              </CollapsibleSection>
-              <CollapsibleSection
-                className="inspector-section optimization-fields"
-                heading="TEXTURE / STRONG DOWNSCALE"
-              >
-                <label>
-                  SAMPLING
-                  <select
-                    value={preview.config.textureOptimization.scaleMode}
-                    onChange={(event) =>
-                      updateConfig(
-                        (config) =>
-                          (config.textureOptimization.scaleMode = event.target
-                            .value as BuildingAnimationConfig['textureOptimization']['scaleMode']),
-                      )
+        <aside className="sandbox-panel inspector-panel" onFocusCapture={() => setPlaying(false)}>
+          <div className="inspector-content">
+            <div className="entity-settings">
+              {selectedStage ? (
+                <>
+                  <CollapsibleSection
+                    className="inspector-section"
+                    heading="СВОЙСТВА СЛОЯ"
+                    open={openSettingsSections.includes('inspector')}
+                    onToggle={() => toggleSettingsSection('inspector')}
+                    subheading={
+                      isMultiSelection
+                        ? `${selectedIndices.length} stages selected`
+                        : selectedStage.name
                     }
                   >
-                    <option value="linear">Linear / smooth</option>
-                    <option value="nearest">Nearest / pixel art</option>
-                  </select>
-                </label>
-                <label className="inline-check">
-                  <input
-                    type="checkbox"
-                    checked={preview.config.textureOptimization.mipmaps}
-                    onChange={(event) =>
-                      updateConfig(
-                        (config) => (config.textureOptimization.mipmaps = event.target.checked),
-                      )
-                    }
-                  />
-                  GENERATE MIPMAPS
-                </label>
-                <label>
-                  ANISOTROPY
-                  <select
-                    value={preview.config.textureOptimization.anisotropy}
-                    onChange={(event) =>
-                      updateConfig(
-                        (config) =>
-                          (config.textureOptimization.anisotropy = Number(
-                            event.target.value,
-                          ) as BuildingAnimationConfig['textureOptimization']['anisotropy']),
-                      )
-                    }
+                    <div className="entity-layer-controls">
+                      {(['hidden', 'solo', 'locked'] as const).map((flag) => (
+                        <button
+                          key={flag}
+                          aria-pressed={selectedStage[flag] === true}
+                          onClick={() => updateStage({ [flag]: !selectedStage[flag] })}
+                        >
+                          {flag === 'hidden' ? 'Hidden' : flag === 'solo' ? 'Solo' : 'Locked'}
+                        </button>
+                      ))}
+                      <details className="layer-operations">
+                        <summary>Действия и пресеты…</summary>
+                        <div>
+                          {' '}
+                          <button
+                            disabled={
+                              isMultiSelection ||
+                              isImageStage(selectedStage) ||
+                              selectedStage.locked
+                            }
+                            onClick={() => {
+                              const config = structuredClone(preview.config),
+                                id = duplicateAnimationResource(config, selectedStage.id);
+                              if (id) {
+                                setConfig(config);
+                                props.document.session.view(activeAnimationId).selectedLayerIds = [
+                                  id,
+                                ];
+                                setLayerSelections((selection) => ({
+                                  ...selection,
+                                  [activeAnimationId]: [id],
+                                }));
+                              }
+                            }}
+                          >
+                            Duplicate
+                          </button>
+                          <button
+                            onClick={() => {
+                              const root = selectedStage.parentId ?? selectedStage.id,
+                                preset = captureAnimationPreset(preview.config, root, 'Filters');
+                              if (preset) {
+                                const parent = preset.stages.find(
+                                  (item) => item.kind !== 'filter',
+                                )!;
+                                parent.kind = 'image';
+                                parent.assetId = `stack/${parent.id}`;
+                                preset.tracks = preset.tracks.filter(
+                                  (track) => track.stageId !== parent.id,
+                                );
+                                setFilterClipboard(preset);
+                              }
+                            }}
+                          >
+                            Copy filters
+                          </button>
+                          <button
+                            disabled={!filterClipboard || selectedStage.locked}
+                            onClick={() => applyPreset(filterClipboard!)}
+                          >
+                            Paste filters
+                          </button>
+                          <TextInput
+                            value={presetName}
+                            label="Preset name"
+                            onCommit={setPresetName}
+                          />
+                          <button
+                            disabled={(preview.config.effectPresets?.length ?? 0) >= 100}
+                            onClick={() => {
+                              const preset = captureAnimationPreset(
+                                preview.config,
+                                selectedStage.parentId ?? selectedStage.id,
+                                presetName || selectedStage.name,
+                              );
+                              if (preset)
+                                updateConfig((config) => {
+                                  config.effectPresets = [...(config.effectPresets ?? []), preset];
+                                });
+                            }}
+                          >
+                            Save preset
+                          </button>
+                        </div>
+                      </details>{' '}
+                    </div>
+                    <fieldset className="entity-editable-fields" disabled={selectedStage.locked}>
+                      <p className="sampled-value-note">
+                        {preview.config.tracks.some((track) => track.stageId === selectedId)
+                          ? 'Значения на текущем кадре · изменение анимируемого свойства записывает ключ'
+                          : 'Базовые значения · AUTO-KEY создаёт анимацию свойства'}
+                      </p>
+                      {isMultiSelection ? (
+                        <span className="multi-selection-note">
+                          TRANSFORM VALUES APPLY TO ALL SELECTED FRAMES
+                        </span>
+                      ) : null}
+                      <label>
+                        NAME
+                        <TextInput
+                          value={selectedStage.name}
+                          disabled={isMultiSelection}
+                          onCommit={(value) => updateStage({ name: value })}
+                        />
+                      </label>
+                      {isImageStage(selectedStage) ? (
+                        <label>
+                          ASSET ID
+                          <TextInput
+                            value={selectedStage.assetId}
+                            disabled={isMultiSelection}
+                            onCommit={renameAssetId}
+                          />
+                        </label>
+                      ) : null}
+                      <div className="field-grid two">
+                        {selectedStage.kind !== 'filter' ||
+                        animationFilterCatalog[selectedStage.filterType!]?.center ? (
+                          <PairedNumberField
+                            label="POSITION X, Y · px"
+                            first={selectedStage.x}
+                            second={selectedStage.y}
+                            onFirst={(x) => updateStage({ x })}
+                            onSecond={(y) => updateStage({ y })}
+                          />
+                        ) : null}
+                        {selectedStage.kind !== 'filter' ? (
+                          <>
+                            <PairedNumberField
+                              label="SCALE X, Y"
+                              min={0.001}
+                              first={selectedStage.scaleX}
+                              second={selectedStage.scaleY}
+                              step={0.01}
+                              onFirst={(scaleX) => updateStage({ scaleX })}
+                              onSecond={(scaleY) => updateStage({ scaleY })}
+                            />
+                            <label>
+                              ROTATION · °
+                              <NumericInput
+                                step={0.01}
+                                value={selectedStage.rotation}
+                                onCommit={(value) => updateStage({ rotation: value })}
+                              />
+                            </label>
+                          </>
+                        ) : null}
+                        <label>
+                          {selectedStage.kind === 'filter' ? 'MIX' : 'OPACITY'}
+                          <NumericInput
+                            min={0}
+                            max={1}
+                            step={0.01}
+                            value={selectedStage.opacity}
+                            onCommit={(value) => updateStage({ opacity: value })}
+                          />
+                        </label>
+                        {isImageStage(selectedStage) ? (
+                          <label>
+                            ПОЯВЛЕНИЕ · s
+                            <NumericInput
+                              min={0}
+                              max={preview.config.timeline.durationSeconds}
+                              step={1 / preview.config.timeline.frameRate}
+                              value={
+                                selectedStage.milestone * preview.config.timeline.durationSeconds
+                              }
+                              disabled={isMultiSelection || selectedId === imageStages[0]?.id}
+                              onCommit={(value) =>
+                                updateStage({
+                                  milestone: value / preview.config.timeline.durationSeconds,
+                                })
+                              }
+                            />
+                          </label>
+                        ) : null}
+                      </div>
+                      {!isImageStage(selectedStage) && !isMultiSelection ? (
+                        <AnimationEffectControls
+                          stage={selectedStage}
+                          config={preview.config}
+                          progress={preview.progress}
+                          onPatch={(patch) => {
+                            if (Object.hasOwn(patch, 'particleTextureId') && selectedId)
+                              onPreview(
+                                renameParticleTexture(
+                                  previewRef.current,
+                                  selectedId,
+                                  patch.particleTextureId,
+                                ),
+                              );
+                            else updateStage(patch);
+                          }}
+                          onTexture={importParticleTexture}
+                        />
+                      ) : null}
+                      {selectedStage.kind !== 'filter' ? (
+                        <details className="advanced-transform">
+                          <summary>Pivot и Skew · дополнительные трансформации</summary>
+                          <div className="field-grid two">
+                            {' '}
+                            <PairedNumberField
+                              label="SKEW X, Y · °"
+                              first={selectedStage.skewX}
+                              second={selectedStage.skewY}
+                              step={0.01}
+                              onFirst={(skewX) => updateStage({ skewX })}
+                              onSecond={(skewY) => updateStage({ skewY })}
+                            />
+                            <PairedNumberField
+                              label="PIVOT X, Y · px"
+                              first={selectedStage.pivotX}
+                              second={selectedStage.pivotY}
+                              step={0.01}
+                              onFirst={(pivotX) => updateStage({ pivotX })}
+                              onSecond={(pivotY) => updateStage({ pivotY })}
+                            />
+                          </div>
+                        </details>
+                      ) : null}
+                    </fieldset>
+                  </CollapsibleSection>
+                  <CollapsibleSection
+                    className="inspector-section canvas-fields"
+                    heading="АНИМАЦИЯ · ГЕОМЕТРИЯ"
+                    open={openSettingsSections.includes('canvas')}
+                    onToggle={() => toggleSettingsSection('canvas')}
                   >
-                    {[1, 2, 4, 8, 16].map((value) => (
-                      <option key={value} value={value}>
-                        {value}×
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <small>Mipmaps + Linear уменьшают зернистость при сильном уменьшении.</small>
-              </CollapsibleSection>
-            </>
-          ) : null}
-          {selectedTransition ? (
-            <CollapsibleSection
-              className="inspector-section transition-fields"
-              heading={`TRANSITION / ${selectedTransition.fromStageId} → ${selectedTransition.toStageId}`}
-            >
-              {isMultiSelection ? (
-                <span className="multi-selection-note">
-                  APPLIES TO EACH SELECTED FRAME'S INCOMING TRANSITION
-                </span>
+                    <label>
+                      CONFIG ID · SCHEMA v{preview.config.schemaVersion}
+                      <TextInput
+                        label="Animation config ID"
+                        value={preview.config.id}
+                        onCommit={(value) => {
+                          if (value.trim())
+                            updateConfig((config) => {
+                              config.id = value.trim();
+                            });
+                        }}
+                      />
+                    </label>
+                    <div className="field-grid two">
+                      <label>
+                        WORLD WIDTH{' '}
+                        <NumericInput
+                          min={0.5}
+                          step={0.1}
+                          value={preview.config.worldSize.widthMeters}
+                          onCommit={(value) =>
+                            updateConfig((config) => (config.worldSize.widthMeters = value))
+                          }
+                        />{' '}
+                        m
+                      </label>
+                      <label>
+                        WORLD HEIGHT{' '}
+                        <NumericInput
+                          min={0.5}
+                          step={0.1}
+                          value={preview.config.worldSize.heightMeters}
+                          onCommit={(value) =>
+                            updateConfig((config) => (config.worldSize.heightMeters = value))
+                          }
+                        />{' '}
+                        m
+                      </label>
+
+                      <label>
+                        W · px
+                        <NumericInput
+                          value={preview.config.canvas.width}
+                          min={1}
+                          onCommit={(value) =>
+                            updateConfig((config) => (config.canvas.width = value))
+                          }
+                        />
+                      </label>
+                      <label>
+                        H · px
+                        <NumericInput
+                          value={preview.config.canvas.height}
+                          min={1}
+                          onCommit={(value) =>
+                            updateConfig((config) => (config.canvas.height = value))
+                          }
+                        />
+                      </label>
+                      <PairedNumberField
+                        label="ORIGIN X, Y · px"
+                        first={preview.config.origin.x}
+                        second={preview.config.origin.y}
+                        onFirst={(x) => updateConfig((config) => (config.origin.x = x))}
+                        onSecond={(y) => updateConfig((config) => (config.origin.y = y))}
+                      />
+                    </div>
+                  </CollapsibleSection>
+                  <CollapsibleSection
+                    className="inspector-section hitbox-fields"
+                    heading="ТЕХНИЧЕСКИЕ · HITBOX"
+                    open={openSettingsSections.includes('hitbox')}
+                    onToggle={() => toggleSettingsSection('hitbox')}
+                  >
+                    <label className="inline-check">
+                      <input
+                        type="checkbox"
+                        checked={preview.showHitbox}
+                        onChange={(event) =>
+                          onPreview({ ...preview, showHitbox: event.target.checked })
+                        }
+                      />
+                      SHOW IN PREVIEW
+                    </label>
+                    <div className="field-grid two">
+                      <PairedNumberField
+                        label="POSITION X, Y · px"
+                        first={preview.config.hitbox.x}
+                        second={preview.config.hitbox.y}
+                        onFirst={(x) => updateConfig((config) => (config.hitbox.x = x))}
+                        onSecond={(y) => updateConfig((config) => (config.hitbox.y = y))}
+                      />
+                      <label>
+                        W
+                        <NumericInput
+                          min={1}
+                          value={preview.config.hitbox.width}
+                          onCommit={(value) =>
+                            updateConfig((config) => (config.hitbox.width = value))
+                          }
+                        />
+                      </label>
+                      <label>
+                        H · px
+                        <NumericInput
+                          min={1}
+                          value={preview.config.hitbox.height}
+                          onCommit={(value) =>
+                            updateConfig((config) => (config.hitbox.height = value))
+                          }
+                        />
+                      </label>
+                    </div>
+                    <PairedNumberField
+                      label="SCALE X, Y"
+                      first={preview.config.hitbox.scaleX}
+                      second={preview.config.hitbox.scaleY}
+                      min={0.05}
+                      step={0.05}
+                      onFirst={(x) => updateConfig((config) => (config.hitbox.scaleX = x))}
+                      onSecond={(y) => updateConfig((config) => (config.hitbox.scaleY = y))}
+                    />
+                    <button
+                      className="inspector-reset"
+                      onClick={() =>
+                        updateConfig((config) => {
+                          config.hitbox = { ...config.alphaBounds, scaleX: 1, scaleY: 1 };
+                        })
+                      }
+                    >
+                      Reset to alpha bounds
+                    </button>
+                  </CollapsibleSection>
+                  <CollapsibleSection
+                    className="inspector-section optimization-fields"
+                    heading="ТЕХНИЧЕСКИЕ · ТЕКСТУРЫ"
+                    open={openSettingsSections.includes('texture')}
+                    onToggle={() => toggleSettingsSection('texture')}
+                  >
+                    <label>
+                      SAMPLING
+                      <select
+                        value={preview.config.textureOptimization.scaleMode}
+                        onChange={(event) =>
+                          updateConfig(
+                            (config) =>
+                              (config.textureOptimization.scaleMode = event.target
+                                .value as BuildingAnimationConfig['textureOptimization']['scaleMode']),
+                          )
+                        }
+                      >
+                        <option value="linear">Linear / smooth</option>
+                        <option value="nearest">Nearest / pixel art</option>
+                      </select>
+                    </label>
+                    <label className="inline-check">
+                      <input
+                        type="checkbox"
+                        checked={preview.config.textureOptimization.mipmaps}
+                        onChange={(event) =>
+                          updateConfig(
+                            (config) => (config.textureOptimization.mipmaps = event.target.checked),
+                          )
+                        }
+                      />
+                      GENERATE MIPMAPS
+                    </label>
+                    <label>
+                      ANISOTROPY
+                      <select
+                        value={preview.config.textureOptimization.anisotropy}
+                        onChange={(event) =>
+                          updateConfig(
+                            (config) =>
+                              (config.textureOptimization.anisotropy = Number(
+                                event.target.value,
+                              ) as BuildingAnimationConfig['textureOptimization']['anisotropy']),
+                          )
+                        }
+                      >
+                        {[1, 2, 4, 8, 16].map((value) => (
+                          <option key={value} value={value}>
+                            {value}×
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <small>Mipmaps + Linear уменьшают зернистость при сильном уменьшении.</small>
+                  </CollapsibleSection>
+                </>
               ) : null}
-              <label>
-                TYPE
-                <select
-                  value={selectedTransition.type}
-                  onChange={(event) =>
-                    updateTransition({
-                      type: event.target.value as BuildingAnimationTransition['type'],
-                    })
-                  }
+              {selectedTransition ? (
+                <CollapsibleSection
+                  className="inspector-section transition-fields"
+                  heading={`ПЕРЕХОД · ${imageStages[transitionIndex - 1]?.name} → ${imageStages[transitionIndex]?.name}`}
+                  open={openSettingsSections.includes('transition')}
+                  onToggle={() => toggleSettingsSection('transition')}
                 >
-                  <option value="crossfade">Crossfade</option>
-                  <option value="reveal">Reveal</option>
-                  <option value="dissolve">Dissolve</option>
-                </select>
-              </label>
-              <label>
-                DIRECTION
-                <select
-                  value={selectedTransition.direction}
-                  onChange={(event) =>
-                    updateTransition({
-                      direction: event.target.value as BuildingAnimationTransition['direction'],
-                    })
-                  }
-                >
-                  <option value="uniform">Uniform</option>
-                  <option value="bottom-to-top">Bottom to top</option>
-                  <option value="top-to-bottom">Top to bottom</option>
-                  <option value="center-out">Center out</option>
-                </select>
-              </label>
-              <Range
-                label="NOISE SCALE"
-                value={selectedTransition.noiseScale}
-                min={1}
-                max={24}
-                step={0.1}
-                onChange={(noiseScale) => updateTransition({ noiseScale })}
-              />
-              <Range
-                label="DIRECTION STRENGTH"
-                value={selectedTransition.directionStrength}
-                min={0}
-                max={1}
-                step={0.01}
-                onChange={(directionStrength) => updateTransition({ directionStrength })}
-              />
-              <Range
-                label="EDGE WIDTH"
-                value={selectedTransition.edgeWidth}
-                min={0.001}
-                max={0.3}
-                step={0.001}
-                onChange={(edgeWidth) => updateTransition({ edgeWidth })}
-              />
-              <Range
-                label="EDGE INTENSITY"
-                value={selectedTransition.edgeIntensity}
-                min={0}
-                max={2}
-                step={0.01}
-                onChange={(edgeIntensity) => updateTransition({ edgeIntensity })}
-              />
-              <label>
-                EDGE COLOR
-                <input
-                  type="color"
-                  value={selectedTransition.edgeColor}
-                  onChange={(event) => updateTransition({ edgeColor: event.target.value })}
-                />
-              </label>
-              <label>
-                EASING
-                <select
-                  value={selectedTransition.easing}
-                  onChange={(event) =>
-                    updateTransition({
-                      easing: event.target.value as BuildingAnimationTransition['easing'],
-                    })
-                  }
-                >
-                  <option value="linear">Linear</option>
-                  <option value="ease-in">Ease in</option>
-                  <option value="ease-out">Ease out</option>
-                  <option value="ease-in-out">Ease in/out</option>
-                </select>
-              </label>
-              {selectedTransition.type === 'dissolve' ? (
-                <label>
-                  EDGE BLEND MODE
-                  <select
-                    value={selectedTransition.blendMode}
-                    onChange={(event) =>
-                      updateTransition({
-                        blendMode: event.target.value as BuildingAnimationTransition['blendMode'],
-                      })
+                  {isMultiSelection ? (
+                    <span className="multi-selection-note">
+                      APPLIES TO EACH SELECTED FRAME'S INCOMING TRANSITION
+                    </span>
+                  ) : null}
+                  <TransitionControls
+                    transition={selectedTransition}
+                    onRemember={props.document.remember}
+                    onChange={(patch, record) => {
+                      setPlaying(false);
+                      updateTransition(patch, record);
+                    }}
+                    progress={
+                      (preview.progress - imageStages[transitionIndex - 1]!.milestone) /
+                      (imageStages[transitionIndex]!.milestone -
+                        imageStages[transitionIndex - 1]!.milestone)
                     }
-                  >
-                    <option value="normal">Normal</option>
-                    <option value="add">Add</option>
-                    <option value="screen">Screen</option>
-                    <option value="multiply">Multiply</option>
-                    <option value="overlay">Overlay</option>
-                  </select>
-                </label>
+                    onProgress={(amount) => {
+                      setPlaying(false);
+                      const start = imageStages[transitionIndex - 1]!.milestone;
+                      const end = imageStages[transitionIndex]!.milestone;
+                      onPreview(
+                        { ...preview, progress: start + (end - start) * amount, visible: true },
+                        false,
+                      );
+                    }}
+                  />
+                </CollapsibleSection>
               ) : null}
-            </CollapsibleSection>
-          ) : null}
-          <div className={`validation-box ${validation.valid ? 'is-valid' : 'is-invalid'}`}>
-            <span>
-              VALIDATION <b>● {validation.valid ? 'PASS' : 'BLOCKED'}</b>
-            </span>
-            <p>
-              {importError ||
-                (validation.valid
-                  ? `${preview.config.stages.length} stages · ${preview.config.tracks.reduce((count, track) => count + track.keys.length, 0)} keys · ${preview.config.timeline.durationSeconds}s @ ${preview.config.timeline.frameRate} fps · Object URLs excluded`
-                  : validation.errors[0])}
-            </p>
+            </div>
+            <div className={`validation-box ${validation.valid ? 'is-valid' : 'is-invalid'}`}>
+              <span>
+                Структура <b>● {validation.valid ? 'КОРРЕКТНА' : 'ОШИБКА'}</b>
+              </span>
+              <p>
+                {importError ||
+                  props.document.error ||
+                  (importing ? 'Reading import…' : '') ||
+                  (validation.valid
+                    ? `${preview.config.stages.length} stages · ${preview.config.tracks.reduce((count, track) => count + track.keys.length, 0)} keys · ${preview.config.timeline.durationSeconds}s @ ${preview.config.timeline.frameRate} fps`
+                    : validation.errors[0])}
+              </p>
+            </div>
           </div>
         </aside>
 
-        <section className="sandbox-timeline sandbox-panel">
-          <KeyframeTimeline
-            config={preview.config}
-            stage={selectedStage}
-            progress={preview.progress}
-            playing={playing}
-            loop={loop}
-            speed={speed}
-            onConfig={(config, progress) =>
-              onPreview({ ...preview, config, progress: progress ?? preview.progress })
+        <div
+          className="timeline-splitter"
+          role="separator"
+          tabIndex={0}
+          aria-label="Высота таймлайна"
+          aria-orientation="horizontal"
+          aria-valuemin={240}
+          aria-valuemax={Math.max(240, (gridRef.current?.clientHeight ?? 700) - 170)}
+          aria-valuenow={Math.min(
+            timelineHeight,
+            Math.max(240, (gridRef.current?.clientHeight ?? 700) - 170),
+          )}
+          onPointerDown={(event) => {
+            if (event.button !== 0) return;
+            splitterDrag.current = {
+              y: event.clientY,
+              height:
+                event.currentTarget.nextElementSibling?.getBoundingClientRect().height ??
+                timelineHeight,
+            };
+            event.currentTarget.setPointerCapture(event.pointerId);
+          }}
+          onPointerMove={(event) => {
+            const drag = splitterDrag.current;
+            if (drag)
+              setTimelineHeight(
+                Math.max(
+                  240,
+                  Math.min(
+                    (gridRef.current?.clientHeight ?? 700) - 170,
+                    drag.height - (event.clientY - drag.y),
+                  ),
+                ),
+              );
+          }}
+          onPointerUp={() => {
+            splitterDrag.current = null;
+          }}
+          onLostPointerCapture={() => {
+            splitterDrag.current = null;
+          }}
+          onKeyDown={(event) => {
+            if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+              event.preventDefault();
+              setTimelineHeight((height) =>
+                Math.max(
+                  240,
+                  Math.min(
+                    (gridRef.current?.clientHeight ?? 700) - 170,
+                    Math.min(height, (gridRef.current?.clientHeight ?? 700) - 170) +
+                      (event.key === 'ArrowUp' ? 20 : -20),
+                  ),
+                ),
+              );
             }
-            onProgress={(progress) => {
-              setPlaying(false);
-              onPreview({ ...preview, progress, visible: true });
-            }}
-            onSelectStage={(index) => setSelectedIndices([index])}
-            onPlaying={setPlaying}
-            onLoop={setLoop}
-            onSpeed={setSpeed}
-          />
-          <div className="timeline-actions">
+          }}
+        />
+        <section className="sandbox-timeline sandbox-panel">
+          <div className="timeline-mode-bar">
+            <div
+              role="tablist"
+              aria-label="Режим таймлайна"
+              onKeyDown={(event) => {
+                if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+                event.preventDefault();
+                const modes = ['animation', 'audio', 'both'] as const;
+                const index = modes.indexOf(timelineMode);
+                const next =
+                  event.key === 'Home'
+                    ? 0
+                    : event.key === 'End'
+                      ? 2
+                      : (index + (event.key === 'ArrowLeft' ? -1 : 1) + 3) % 3;
+                changeTimelineMode(modes[next]!);
+                const tabs =
+                  event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]');
+                tabs[next]?.focus();
+              }}
+            >
+              <button
+                role="tab"
+                id="timeline-tab-animation"
+                tabIndex={timelineMode === 'animation' ? 0 : -1}
+                aria-selected={timelineMode === 'animation'}
+                aria-controls="animation-timeline-panel"
+                onClick={() => changeTimelineMode('animation')}
+              >
+                Анимация
+              </button>
+              <button
+                role="tab"
+                id="timeline-tab-audio"
+                tabIndex={timelineMode === 'audio' ? 0 : -1}
+                aria-selected={timelineMode === 'audio'}
+                aria-controls="audio-timeline-panel"
+                onClick={() => changeTimelineMode('audio')}
+              >
+                Звук <small>{preview.config.sounds.length}</small>
+              </button>
+              <button
+                role="tab"
+                id="timeline-tab-both"
+                aria-selected={timelineMode === 'both'}
+                tabIndex={timelineMode === 'both' ? 0 : -1}
+                aria-controls="animation-timeline-panel audio-timeline-panel"
+                onClick={() => changeTimelineMode('both')}
+              >
+                Анимация + звук
+              </button>
+            </div>
             <span>
-              TIME{' '}
-              <b>{(preview.progress * preview.config.timeline.durationSeconds).toFixed(2)} s</b>
+              {
+                props.document.preview.library.animations.find(
+                  (entry) => entry.id === props.document.preview.activeAnimationId,
+                )?.name
+              }{' '}
+              · {preview.config.timeline.frameRate} fps
             </span>
-            <div>
-              <button className={placing ? 'is-placing' : ''} onClick={togglePlacement}>
-                {placing ? 'Cancel Placement' : 'Spawn Test Building'}
-              </button>
-              <button
-                onClick={() => {
-                  onPreview({
-                    ...preview,
-                    progress: preview.config.timeline.workAreaStart,
-                    visible: true,
-                  });
-                  setPlaying(true);
+          </div>
+          <AnimationMarkers
+            key={props.document.preview.activeAnimationId}
+            document={props.document}
+          />
+          <div className={`timeline-panels ${timelineMode === 'both' ? 'is-combined' : ''}`}>
+            <div
+              className="timeline-mode-panel"
+              id="animation-timeline-panel"
+              role="tabpanel"
+              aria-labelledby="timeline-tab-animation"
+              hidden={timelineMode === 'audio'}
+              inert={timelineMode === 'audio'}
+            >
+              <KeyframeTimeline
+                zoom={props.document.timelineZoom}
+                onZoom={props.document.setTimelineZoom}
+                linkedScroll={
+                  timelineMode === 'both' ? props.document.timelineScrollLeft : undefined
+                }
+                onScroll={props.document.setTimelineScrollLeft}
+                key={props.document.preview.activeAnimationId}
+                session={props.document.session}
+                animationId={activeAnimationId}
+                config={preview.config}
+                stage={selectedStage}
+                progress={preview.progress}
+                playing={playing}
+                loop={loop}
+                speed={speed}
+                snap={props.document.snap}
+                onSnap={props.document.setSnap}
+                autoKey={props.document.autoKey}
+                onAutoKey={props.document.setAutoKey}
+                onRemember={props.document.remember}
+                onUndo={props.document.undo}
+                onRedo={props.document.redo}
+                canUndo={props.document.canUndo}
+                canRedo={props.document.canRedo}
+                onConfig={(config, progress) =>
+                  onPreview({ ...preview, config, progress: progress ?? preview.progress }, false)
+                }
+                onProgress={(progress) => {
+                  setPlaying(false);
+                  onPreview({ ...preview, progress, visible: true });
                 }}
-              >
-                Restart Build
-              </button>
-              <button className="danger" onClick={() => onPreview({ ...preview, visible: false })}>
-                Remove Test Building
-              </button>
-              <button
-                className="cyan"
-                onClick={() => {
-                  onPreview({ ...preview, visible: true });
-                  props.onOpenGame();
-                }}
-              >
-                Test In Game
-              </button>
-              <button onClick={() => importRef.current?.click()}>Import JSON</button>
-              <button className="primary" disabled={!validation.valid} onClick={exportJson}>
-                Export Animation JSON
-              </button>
+                onSelectStage={(index) => setSelectedIndices([index])}
+                onPlaying={setPlaying}
+                onLoop={setLoop}
+                onSpeed={setSpeed}
+              />
+            </div>
+            <div
+              className="timeline-mode-panel"
+              id="audio-timeline-panel"
+              role="tabpanel"
+              aria-labelledby="timeline-tab-audio"
+              hidden={timelineMode === 'animation'}
+              inert={timelineMode === 'animation'}
+            >
+              <AudioTimeline
+                key={props.document.preview.activeAnimationId}
+                document={props.document}
+                compact={timelineMode === 'both'}
+              />
             </div>
           </div>
           <input
@@ -1135,7 +1943,10 @@ export function AnimationSandbox(props: Props) {
             className="hidden-input"
             type="file"
             accept="application/json,.json"
-            onChange={(event) => void importJson(event.target.files?.[0])}
+            onChange={(event) => {
+              void importJson(event.target.files?.[0]);
+              event.target.value = '';
+            }}
           />
         </section>
       </div>
@@ -1148,13 +1959,16 @@ function CollapsibleSection({
   heading,
   subheading,
   children,
+  open,
+  onToggle,
 }: {
   className: string;
   heading: string;
   subheading?: string;
   children: ReactNode;
+  open: boolean;
+  onToggle: () => void;
 }) {
-  const [open, setOpen] = useState(false);
   const contentId = useId();
   return (
     <section className={`collapsible-block ${className} ${open ? 'is-open' : ''}`}>
@@ -1163,7 +1977,7 @@ function CollapsibleSection({
         className="collapsible-heading"
         aria-expanded={open}
         aria-controls={contentId}
-        onClick={() => setOpen((current) => !current)}
+        onClick={onToggle}
       >
         <span className="collapsible-heading-copy">
           <span>{heading}</span>
@@ -1203,57 +2017,22 @@ function PairedNumberField({
     <div className="paired-number-field">
       <span>{label}</span>
       <div>
-        <input
-          type="number"
-          aria-label={`${label} first value`}
+        <NumericInput
+          label={`${label} X`}
           value={first}
           min={min}
           step={step}
-          onChange={(event) => onFirst(Number(event.target.value))}
+          onCommit={(value) => onFirst(value)}
         />
         <span aria-hidden="true">,</span>
-        <input
-          type="number"
-          aria-label={`${label} second value`}
+        <NumericInput
+          label={`${label} Y`}
           value={second}
           min={min}
           step={step}
-          onChange={(event) => onSecond(Number(event.target.value))}
+          onCommit={(value) => onSecond(value)}
         />
       </div>
     </div>
-  );
-}
-
-function Range({
-  label,
-  value,
-  min,
-  max,
-  step,
-  onChange,
-}: {
-  label: string;
-  value: number;
-  min: number;
-  max: number;
-  step: number;
-  onChange: (value: number) => void;
-}) {
-  return (
-    <label className="range-field">
-      <span>
-        {label}
-        <b>{value.toFixed(step < 0.01 ? 3 : 2)}</b>
-      </span>
-      <input
-        type="range"
-        value={value}
-        min={min}
-        max={max}
-        step={step}
-        onChange={(event) => onChange(Number(event.target.value))}
-      />
-    </label>
   );
 }
