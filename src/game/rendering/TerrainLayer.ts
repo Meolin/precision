@@ -8,6 +8,7 @@ import type { TerrainLightingSettings } from './TerrainLightingSettings';
 import type { TerrainSmoothingSettings } from './TerrainSmoothingSettings';
 import {
   defaultTerrainTextureSettings,
+  terrainRockContourAssetUrl,
   terrainRockTextureAsset,
   terrainSoilTextureAsset,
   type TerrainRockTextureId,
@@ -100,6 +101,7 @@ export class TerrainLayer {
   private textureSettings: TerrainTextureSettings | null = null;
   private soilTexture = Texture.WHITE;
   private rockTexture = Texture.WHITE;
+  private ownedRockTexture: Texture | null = null;
   private rockAlphaTexture: Texture | null = null;
   private rockTextureFormat: TerrainTextureFormat = terrainRockTextureAsset(
     defaultTerrainTextureSettings.rockTextureId,
@@ -202,6 +204,7 @@ export class TerrainLayer {
     }
     for (const visual of this.visuals.values()) {
       visual.mesh.setSettings(settings, textureSettings.orientation);
+      visual.mesh.setDensityTiling(terrain.rockDensityMask !== null);
       visual.mesh.setPixelsPerMeter(pixelsPerMeter);
       visual.mesh.setSoilTexture(this.soilTexture);
       visual.mesh.setRockTexture(this.rockTexture, this.rockTextureFormat);
@@ -235,18 +238,24 @@ export class TerrainLayer {
 
   private async loadRockTexture(textureId: TerrainRockTextureId): Promise<void> {
     const revision = ++this.rockTextureLoadRevision;
+    let ownedTexture: Texture | null = null;
+    let installed = false;
     try {
       const asset = terrainRockTextureAsset(textureId);
-      const [texture, alphaTexture] = await Promise.all([
+      const contourAssetUrl = terrainRockContourAssetUrl(asset);
+      const texture =
         asset.format === 'albedo-normal-horizontal'
-          ? this.loadCombinedAlbedoTexture(asset.assetUrl)
-          : this.loadTextureAsset(asset.assetUrl),
-        asset.alphaAssetUrl ? this.loadTextureAsset(asset.alphaAssetUrl) : Promise.resolve(null),
-      ]);
+          ? await this.loadCombinedAlbedoTexture(asset.assetUrl)
+          : await this.loadTextureAsset(asset.assetUrl);
+      if (asset.format === 'albedo-normal-horizontal') ownedTexture = texture;
+      if (this.disposed || revision !== this.rockTextureLoadRevision) return;
+      const alphaTexture = contourAssetUrl ? await this.loadTextureAsset(contourAssetUrl) : null;
       if (this.disposed || revision !== this.rockTextureLoadRevision) return;
       this.configureMaterialTexture(texture, rockVisual);
       if (alphaTexture) this.configureMaterialTexture(alphaTexture, rockVisual);
+      const previousOwned = this.ownedRockTexture;
       this.rockTexture = texture;
+      this.ownedRockTexture = ownedTexture;
       this.rockAlphaTexture = alphaTexture;
       // Combined sources are split before upload, so the GPU texture contains albedo only.
       this.rockTextureFormat = 'albedo';
@@ -256,6 +265,8 @@ export class TerrainLayer {
         visual.mesh.setRockTexture(texture, this.rockTextureFormat);
         visual.mesh.setRockAlphaTexture(alphaTexture);
       }
+      installed = true;
+      previousOwned?.destroy(true);
       void this.materialMapCache.get(textureId).then(
         (maps) => {
           if (this.disposed || revision !== this.rockTextureLoadRevision) return;
@@ -270,6 +281,8 @@ export class TerrainLayer {
       console.warn(
         `Rock texture ${textureId} could not be loaded; keeping the previous texture. ${error instanceof Error ? error.message : String(error)}`,
       );
+    } finally {
+      if (!installed) ownedTexture?.destroy(true);
     }
   }
 
@@ -484,6 +497,7 @@ export class TerrainLayer {
         orientation: textureSettings.orientation,
       });
       mesh.setPixelsPerMeter(this.pixelsPerMeter);
+      mesh.setDensityTiling(terrain.rockDensityMask !== null);
       mesh.setMaterialMaps(this.materialMaps);
       if (this.lighting) mesh.setLighting(this.lighting);
       visual = {
@@ -530,6 +544,8 @@ export class TerrainLayer {
     this.pendingPresentation = [];
     this.clearVisuals();
     this.materialMapCache.destroy();
+    this.ownedRockTexture?.destroy(true);
+    this.ownedRockTexture = null;
     this.container.destroy();
   }
 }

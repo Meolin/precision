@@ -63,6 +63,16 @@ describe('chunked packed terrain collision', () => {
     expect(terrain.cells.every((material) => material === Material.Air)).toBe(true);
   });
 
+  it('does not clear a cell whose center lies outside the damage circle', () => {
+    const outside = new TerrainGrid(10, 10, 1, new Uint8Array(100).fill(Material.Soil));
+    expect(outside.destroyCircle({ x: -2, y: 5.5 }, 0.1).changed).toBe(false);
+    expect(outside.getMaterialAtCell(0, 5)).toBe(Material.Soil);
+
+    const subcell = new TerrainGrid(10, 10, 0.4, new Uint8Array(100).fill(Material.Soil));
+    expect(subcell.destroyCircle({ x: 1.75, y: 1.71 }, 0.1).changed).toBe(false);
+    expect(subcell.getMaterialAtCell(4, 4)).toBe(Material.Soil);
+  });
+
   it('raycasts fast, grazing and exact chunk-boundary contacts against the mask', () => {
     const terrain = new TerrainGrid(128, 20, 1, undefined, 64);
     terrain.setSolid(64, 10, true);

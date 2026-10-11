@@ -7,6 +7,7 @@ import type { UnitState } from '../entities/UnitState';
 import type { ProjectileCollisionResult } from '../collision/ProjectileCollisionResult';
 import { queryProjectileCollision } from '../collision/queryProjectileCollision';
 import { updateOwnerExclusion } from '../collision/entityCollision';
+import type { BodyState } from '../physics/Body';
 
 export const calculateKineticEnergy = (massKg: number, velocity: Vec2): number =>
   0.5 * massKg * lengthSquared(velocity);
@@ -43,6 +44,7 @@ export function advanceProjectile(
   dt: number,
   samples: Vec2[] | undefined,
   units: readonly UnitState[],
+  bodies?: readonly BodyState[],
 ): ProjectileCollisionResult | null;
 export function advanceProjectile(
   projectile: ProjectileState,
@@ -51,11 +53,12 @@ export function advanceProjectile(
   dt: number,
   samples?: Vec2[],
   units?: readonly UnitState[],
+  bodies: readonly BodyState[] = [],
 ): TerrainHit | ProjectileCollisionResult | null {
   if (units) updateOwnerExclusion(projectile, units);
   stepProjectile(projectile, config.physics, dt);
   const hit = units
-    ? queryProjectileCollision(projectile, terrain, units, samples)
+    ? queryProjectileCollision(projectile, terrain, units, samples, bodies)
     : sweepTerrain(
         terrain,
         projectile.previousPosition,

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { cloneConfig } from '../config/defaultGameConfig';
 import { createTerrainSurface, generateTerrain } from './generateTerrain';
+import { TerrainMaterialId } from './TerrainMaterialId';
 
 describe('continuous terrain generation', () => {
   it('uses the same seeded surface at every collision resolution', () => {
@@ -39,5 +40,27 @@ describe('continuous terrain generation', () => {
       const rightSlope = (surface(x + epsilon) - surface(x)) / epsilon;
       expect(Math.abs(leftSlope - rightSlope)).toBeLessThan(1e-5);
     }
+  });
+
+  it('uses the selected alpha profile for authoritative Rock cells', () => {
+    const config = cloneConfig();
+    config.world.widthMeters = 8;
+    config.world.heightMeters = 16;
+    config.terrain.cellSizeMeters = 0.1;
+    config.terrain.surfaceHeightFraction = 0.25;
+    config.terrain.waveAmplitudeMeters = 0;
+    config.terrain.noiseAmplitudeMeters = 0;
+    config.terrain.rockDepthMeters = 3;
+    config.terrain.rockVariationMeters = 0;
+    config.terrain.rockLayerMask = {
+      sourceId: 'test-alpha',
+      tileWidthMeters: 4,
+      offsetsMeters: [-1, -1, 1, 1],
+      orientation: 'sequential',
+    };
+    const terrain = generateTerrain(config, 12345);
+    const sampleY = 6.5;
+    expect(terrain.getMaterialAtWorldPosition({ x: 0.5, y: sampleY })).toBe(TerrainMaterialId.Rock);
+    expect(terrain.getMaterialAtWorldPosition({ x: 2.5, y: sampleY })).toBe(TerrainMaterialId.Soil);
   });
 });

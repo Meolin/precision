@@ -5,6 +5,7 @@ import { clamp, toRadians, type EntityId, type Vec2 } from '../math/Vec2';
 import type { TerrainGrid } from '../terrain/TerrainGrid';
 import { createProjectile } from './Projectile';
 import { advanceProjectile } from './projectilePhysics';
+import type { BodyState } from '../physics/Body';
 
 export interface BallisticSolution {
   angleRad: number;
@@ -31,8 +32,14 @@ export function solveBallisticAim(
   config: GameConfig,
   units: readonly UnitState[],
   targetEntityId?: EntityId,
+  bodies: readonly BodyState[] = [],
 ): BallisticSolution | null {
   if (!cannon.alive || !Number.isFinite(target.x) || !Number.isFinite(target.y)) return null;
+  const collisionBodies = bodies.map((body) => ({
+    ...body,
+    previousPosition: { ...body.position },
+    previousRotationRad: body.rotationRad,
+  }));
   const dt = 1 / config.simulation.tickRate;
   const min = toRadians(config.cannon.minAngleDeg);
   const max = toRadians(config.cannon.maxAngleDeg);
@@ -56,7 +63,15 @@ export function solveBallisticAim(
     for (let tick = 0; tick < maxTicks && projectile.alive; tick++) {
       // Shared with live shots and preview: integration, swept collisions,
       // owner exclusion, lifetime and world bounds. Stop at the first contact.
-      const hit = advanceProjectile(projectile, terrain, config, dt, undefined, units);
+      const hit = advanceProjectile(
+        projectile,
+        terrain,
+        config,
+        dt,
+        undefined,
+        units,
+        collisionBodies,
+      );
       const distance = segmentDistance(target, projectile.previousPosition, projectile.position);
       if (distance < missDistanceMeters) {
         missDistanceMeters = distance;

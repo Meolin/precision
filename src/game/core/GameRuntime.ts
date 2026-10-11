@@ -14,6 +14,8 @@ import { hitboxCenter } from '../entities/Hitbox';
 import type { ExplosionResolvedEvent } from '../explosions/resolveExplosion';
 import { isInstallation } from '../entities/InstallationState';
 import { cloneUnit } from '../entities/UnitState';
+import { rockLayerMaskKey } from '../terrain/RockLayerMask';
+import { rockDensityMaskKey } from '../terrain/RockDensityMask';
 
 export interface RecentExplosion {
   event: ExplosionResolvedEvent;
@@ -216,7 +218,11 @@ export class GameRuntime {
   }
 
   reset(seed = this.state.seed): void {
-    this.state = createGameState(this.config, seed);
+    this.replaceState(createGameState(this.config, seed));
+  }
+
+  private replaceState(state: GameState): void {
+    this.state = state;
     this.commands = [];
     this.collisionSamples.length = 0;
     this.penetrationPath = null;
@@ -242,11 +248,17 @@ export class GameRuntime {
       validated.terrain.chunkSizeCells !== this.config.terrain.chunkSizeCells ||
       validated.terrain.rockDepthMeters !== this.config.terrain.rockDepthMeters ||
       validated.terrain.rockVariationMeters !== this.config.terrain.rockVariationMeters ||
+      rockDensityMaskKey(validated.terrain.rockDensityMask) !==
+        rockDensityMaskKey(this.config.terrain.rockDensityMask) ||
+      rockLayerMaskKey(validated.terrain.rockLayerMask) !==
+        rockLayerMaskKey(this.config.terrain.rockLayerMask) ||
       validated.rts.installationsPerPlayer !== this.config.rts.installationsPerPlayer;
+    // Construct first: an invalid spawn or terrain must leave runtime intact.
+    const replacement = resize ? createGameState(validated, this.state.seed) : null;
     if (validated.simulation.tickRate !== this.config.simulation.tickRate) this.clock.reset();
     this.config = validated;
     this.configRevision++;
-    if (resize) this.reset();
+    if (replacement) this.replaceState(replacement);
     return this.config;
   }
 
@@ -262,11 +274,23 @@ export class GameRuntime {
           `${unit.id}:${unit.alive}:${unit.position.x}:${unit.position.y}:${unit.hitbox.radiusMeters}:${unit.hitbox.offset?.x ?? 0}:${unit.hitbox.offset?.y ?? 0}`,
       )
       .join('|');
-    const key = `${cannon.id}:${cannon.alive}:${this.configRevision}:${this.state.terrain.version}:${cannon.weaponId}:${cannon.angleRad}:${cannon.position.x}:${cannon.position.y}:${unitsKey}`;
+    const bodiesKey = this.state.bodies
+      .map(
+        (body) =>
+          `${body.id}:${Math.round(body.position.x * 10)}:${Math.round(body.position.y * 10)}:${Math.round(body.rotationRad * 10)}`,
+      )
+      .join('|');
+    const key = `${cannon.id}:${cannon.alive}:${this.configRevision}:${this.state.terrain.version}:${cannon.weaponId}:${cannon.angleRad}:${cannon.position.x}:${cannon.position.y}:${unitsKey}:${bodiesKey}`;
     if (this.preview?.key !== key)
       this.preview = {
         key,
-        value: simulateTrajectoryPreview(cannon, this.state.terrain, this.config, this.state.units),
+        value: simulateTrajectoryPreview(
+          cannon,
+          this.state.terrain,
+          this.config,
+          this.state.units,
+          this.state.bodies,
+        ),
       };
     return this.preview.value;
   }

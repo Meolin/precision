@@ -1,5 +1,7 @@
 import type { WeaponId } from '../weapons/WeaponDefinition';
 import type { WeaponOverrides } from '../weapons/WeaponSettings';
+import type { RockLayerMask } from '../terrain/RockLayerMask';
+import type { RockDensityMask } from '../terrain/RockDensityMask';
 
 export interface DamagePopupVelocityCurve {
   control1: { x: number; y: number };
@@ -39,6 +41,8 @@ export interface GameConfig {
     /** null generates the legacy, all-Soil terrain. */
     rockDepthMeters: number | null;
     rockVariationMeters: number;
+    rockLayerMask: RockLayerMask | null;
+    rockDensityMask: RockDensityMask | null;
   };
   cannon: {
     minAngleDeg: number;

@@ -48,12 +48,12 @@ describe('building animation keyframes', () => {
       schemaVersion: 2,
       tracks: undefined,
     });
-    expect(migrated.schemaVersion).toBe(5);
+    expect(migrated.schemaVersion).toBe(9);
     expect(migrated.tracks).toEqual([]);
     expect(migrated.timeline.durationSeconds).toBe(4);
 
     const v3 = loadBuildingAnimationConfig({ ...oldConfig, schemaVersion: 3, timeline: undefined });
-    expect(v3.schemaVersion).toBe(5);
+    expect(v3.schemaVersion).toBe(9);
     expect(v3.stages[0]?.opacity).toBe(1);
 
     const v4 = loadBuildingAnimationConfig({ ...oldConfig, schemaVersion: 4 });

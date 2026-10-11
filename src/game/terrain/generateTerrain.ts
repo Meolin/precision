@@ -2,6 +2,7 @@ import type { GameConfig } from '../config/GameConfig';
 import { clamp } from '../math/Vec2';
 import { TerrainGrid } from './TerrainGrid';
 import { TerrainMaterialId } from './TerrainMaterialId';
+import { sampleRockLayerMask } from './RockLayerMask';
 
 export function createSeededRandom(seed: number): () => number {
   let value = seed >>> 0;
@@ -73,9 +74,15 @@ export function generateTerrain(config: GameConfig, seed: number): TerrainGrid {
             cell,
             rockDepthMeters + Math.sin(u * Math.PI * 5 + rockPhase) * rockVariationMeters,
           );
+    const maskedRockDepth =
+      rockDepth === Infinity || !config.terrain.rockLayerMask
+        ? rockDepth
+        : Math.max(cell, rockDepth + sampleRockLayerMask(config.terrain.rockLayerMask, x));
     for (let row = firstRow; row < rows; row++)
       cells[row * columns + column] =
-        (row + 0.5) * cell - surface >= rockDepth ? TerrainMaterialId.Rock : TerrainMaterialId.Soil;
+        (row + 0.5) * cell - surface >= maskedRockDepth
+          ? TerrainMaterialId.Rock
+          : TerrainMaterialId.Soil;
   }
   return new TerrainGrid(
     columns,
@@ -84,5 +91,6 @@ export function generateTerrain(config: GameConfig, seed: number): TerrainGrid {
     cells,
     config.terrain.chunkSizeCells,
     initialSurfaceMeters,
+    config.terrain.rockDensityMask,
   );
 }

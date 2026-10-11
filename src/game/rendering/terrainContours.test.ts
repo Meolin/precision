@@ -33,7 +33,7 @@ describe('terrain visual boundary migration', () => {
 
   it('keeps map-edge damage bounded and publishes a local dirty rectangle', () => {
     const terrain = terrainFromRows(['.##', '###', '###']);
-    const change = terrain.destroyCircle({ x: 0, y: 0 }, 1.5);
+    const change = terrain.destroyCircle({ x: 0, y: 0.3 }, 1.4);
     expect(change.changed).toBe(true);
     expect(change.dirtyRect?.minX).toBe(0);
     expect(change.dirtyRect?.minY).toBe(1);

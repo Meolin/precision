@@ -40,6 +40,7 @@ describe('ballistic MVP baseline', () => {
     runtime.getState().cannon.grounding.terrainVersion = runtime.getState().terrain.version;
     // Isolate the original one-gun physics fixture from the new battery scene.
     runtime.getState().units.splice(1);
+    runtime.getState().bodies.length = 0;
     runtime.enqueueCommand({ type: 'setAim', cannonId: 1, angleRad: toRadians(angle) });
     runtime.advance(1000 / 60);
     const preview = runtime.getTrajectoryPreview();

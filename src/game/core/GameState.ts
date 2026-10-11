@@ -16,6 +16,9 @@ import { spawnInstallations } from '../entities/spawnInstallations';
 import type { ExplosionEvent } from '../explosions/ExplosionEvent';
 import type { ExplosionResolvedEvent } from '../explosions/resolveExplosion';
 import type { FallingTerrainCluster, PendingTerrainSettling } from '../terrain/terrainSettling';
+import type { BodyState } from '../physics/Body';
+import { spawnBodies } from '../physics/spawnBodies';
+import type { BodyImpactEvent } from '../physics/resolveProjectileBodyImpact';
 
 export interface LastEntityImpact extends EntityImpactEvent, HealthChange {
   damage: number;
@@ -38,6 +41,7 @@ export interface LastImpact extends ImpactEvent {
   exitSpeed: number;
 }
 export type SimulationEvent =
+  | BodyImpactEvent
   | ExplosionEvent
   | ExplosionResolvedEvent
   | EntityImpactEvent
@@ -56,6 +60,7 @@ export interface GameState {
   units: UnitState[];
   lastEntityImpact: LastEntityImpact | null;
   projectiles: ProjectileState[];
+  bodies: BodyState[];
   terrain: TerrainGrid;
   pendingTerrainSettling: PendingTerrainSettling[];
   fallingTerrain: FallingTerrainCluster[];
@@ -68,6 +73,8 @@ export function createGameState(config: GameConfig, seed: number): GameState {
   const terrain = generateTerrain(config, seed);
   const units = spawnInstallations(terrain, config);
   const cannon = units[0]!;
+  // Demo bodies use reserved negative IDs; projectile/entity allocation stays unchanged.
+  const bodies = spawnBodies(terrain, config, -6);
   return {
     tick: 0,
     elapsedSeconds: 0,
@@ -77,6 +84,7 @@ export function createGameState(config: GameConfig, seed: number): GameState {
     units,
     lastEntityImpact: null,
     projectiles: [],
+    bodies,
     terrain,
     pendingTerrainSettling: [],
     fallingTerrain: [],

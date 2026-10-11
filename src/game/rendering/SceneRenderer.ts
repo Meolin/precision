@@ -17,7 +17,10 @@ import { MinimapRenderer } from './MinimapRenderer';
 import type { TerrainSmoothingSettings } from './TerrainSmoothingSettings';
 import type { TerrainTextureSettings } from './TerrainTextureSettings';
 import { BuildingAnimationPlayer } from '../buildings/BuildingAnimationPlayer';
-import type { BuildingAnimationPreview } from '../buildings/BuildingAnimationPreview';
+import type {
+  BuildingAnimationPreview,
+  BuildingAnimationAssetStatus,
+} from '../buildings/BuildingAnimationPreview';
 import type { FallingTerrainCluster } from '../terrain/terrainSettling';
 import { TerrainMaterialId } from '../terrain/TerrainMaterialId';
 import { terrainMaterialVisuals } from './terrainMaterialVisuals';
@@ -57,6 +60,7 @@ export class SceneRenderer {
   private screenOverlay = new Graphics();
   private cannon = new Graphics();
   private units = new Graphics();
+  private bodies = new Graphics();
   private terrainDebug = new Graphics();
   private terrainDebugKey = '';
   private terrainMetrics = new Text({
@@ -77,7 +81,10 @@ export class SceneRenderer {
   private cannonStateIdentity: object | null = null;
   private disposed = false;
 
-  constructor(private parent: Container) {
+  constructor(
+    private parent: Container,
+    private onBuildingAssets?: (status: BuildingAnimationAssetStatus) => void,
+  ) {
     void Assets.load<Texture>(cannonBaseUrl).then((texture) => {
       if (!this.disposed) {
         this.baseTexture = texture;
@@ -106,6 +113,7 @@ export class SceneRenderer {
       this.trajectory,
       this.buildingLayer,
       this.units,
+      this.bodies,
       this.selection,
       this.terrainDebug,
       this.terrainMetrics,
@@ -256,6 +264,45 @@ export class SceneRenderer {
             ? 0xed85ac
             : colors.accent;
       this.cannon.circle(position.x, position.y, 0.22).fill({ color: weaponColor, alpha });
+    }
+
+    this.bodies.clear();
+    for (const body of state.bodies) {
+      const point = lerp(body.previousPosition, body.position, runtime.interpolationAlpha);
+      const angle =
+        body.previousRotationRad +
+        (body.rotationRad - body.previousRotationRad) * runtime.interpolationAlpha;
+      const shape = body.shape;
+      if (shape.type === 'circle') this.bodies.circle(point.x, point.y, shape.radius);
+      else {
+        const cosine = Math.cos(angle);
+        const sine = Math.sin(angle);
+        const corners: [number, number][] = [
+          [-shape.halfWidth, -shape.halfHeight],
+          [shape.halfWidth, -shape.halfHeight],
+          [shape.halfWidth, shape.halfHeight],
+          [-shape.halfWidth, shape.halfHeight],
+        ];
+        for (const [index, [x, y]] of corners.entries()) {
+          const px = point.x + x * cosine - y * sine;
+          const py = point.y + x * sine + y * cosine;
+          if (index === 0) this.bodies.moveTo(px, py);
+          else this.bodies.lineTo(px, py);
+        }
+        this.bodies.closePath();
+      }
+      this.bodies.fill(body.color).stroke({ color: 0x101719, width: Math.max(pixel * 1.5, 0.08) });
+      if (shape.type === 'circle')
+        this.bodies
+          .moveTo(point.x, point.y)
+          .lineTo(
+            point.x + Math.cos(angle) * shape.radius * 0.8,
+            point.y + Math.sin(angle) * shape.radius * 0.8,
+          )
+          .stroke({ color: 0x101719, width: Math.max(pixel * 1.2, 0.06) });
+      this.bodies
+        .circle(point.x, point.y, Math.max(pixel * 1.5, 0.07))
+        .fill({ color: 0x101719, alpha: 0.75 });
     }
 
     this.selection.clear();
@@ -597,6 +644,7 @@ export class SceneRenderer {
       this.buildingPlayer = new BuildingAnimationPlayer({
         config: preview.config,
         resolveTexture: resolver,
+        onAssets: this.onBuildingAssets,
       });
       this.buildingLayer.addChild(this.buildingPlayer.container);
       this.buildingConfigIdentity = preview.config;
@@ -660,6 +708,7 @@ export class SceneRenderer {
   }
 
   destroy(): void {
+    if (this.disposed) return;
     this.disposed = true;
     this.postProcessing.destroy();
     this.minimap.destroy();
@@ -667,9 +716,9 @@ export class SceneRenderer {
     this.damagePopups.destroy();
     this.buildingPlayer?.destroy();
     this.buildingPlayer = null;
-    this.frame.mask = null;
-    this.parent.removeChild(this.frame, this.frameMask);
-    this.frameMask.destroy();
-    this.frame.destroy({ children: true });
+    if (!this.frame.destroyed) this.frame.mask = null;
+    if (!this.parent.destroyed) this.parent.removeChild(this.frame, this.frameMask);
+    if (!this.frameMask.destroyed) this.frameMask.destroy();
+    if (!this.frame.destroyed) this.frame.destroy({ children: true });
   }
 }

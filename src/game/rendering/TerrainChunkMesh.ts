@@ -49,6 +49,7 @@ uniform float uSmoothingEnabled;
 uniform float uSmoothingQuality;
 uniform vec2 uFieldTexelSize;
 uniform float uTextureOrientation;
+uniform float uDensityTiling;
 uniform vec2 uRockTileSize;
 uniform vec2 uSoilTileSize;
 uniform float uRockOpacity;
@@ -73,7 +74,12 @@ uniform float uMaterialMapsReady;
 uniform float uDisplayMode;
 
 float tileHash(vec2 tile) {
-  return fract(sin(dot(tile, vec2(127.1, 311.7))) * 43758.5453123);
+  if (uDensityTiling < 0.5)
+    return fract(sin(dot(tile, vec2(127.1, 311.7))) * 43758.5453123);
+  uvec2 coordinates = uvec2(ivec2(tile));
+  uint value = coordinates.x * 374761393u + coordinates.y * 668265263u;
+  value = (value ^ (value >> 13u)) * 1274126177u;
+  return float((value ^ (value >> 16u)) & 65535u) / 65536.0;
 }
 
 vec2 textureCoordinate(vec2 scaled, inout vec2 gradientX, inout vec2 gradientY, out mat2 uvJacobian) {
@@ -329,6 +335,7 @@ export class TerrainChunkMesh {
   private lighting: TerrainLightingSettings | null = null;
   private smoothing: TerrainSmoothingSettings;
   private orientation: TerrainTextureOrientation;
+  private densityTiling = false;
 
   constructor(private readonly options: TerrainChunkMeshOptions) {
     const [width, height] = options.chunkSizeMeters;
@@ -383,6 +390,7 @@ export class TerrainChunkMesh {
         value: terrainTextureOrientationIndex(options.orientation),
         type: 'f32',
       },
+      uDensityTiling: { value: 0, type: 'f32' },
       uRockTileSize: { value: new Float32Array(tileSize), type: 'vec2<f32>' },
       uSoilTileSize: { value: new Float32Array(soilTileSize), type: 'vec2<f32>' },
       uRockOpacity: {
@@ -473,6 +481,11 @@ export class TerrainChunkMesh {
     this.uniforms.uniforms.uRockTextureFormat = terrainTextureFormatIndex(format);
   }
 
+  setDensityTiling(enabled: boolean): void {
+    this.densityTiling = enabled;
+    this.uniforms.uniforms.uDensityTiling = enabled ? 1 : 0;
+  }
+
   setSoilTexture(texture: Texture): void {
     if (texture === this.soilTexture) return;
     this.soilTexture = texture;
@@ -561,11 +574,13 @@ export class TerrainChunkMesh {
       orientation: this.orientation,
     });
     instance.setMaterialMaps(this.materialMaps);
+    instance.setDensityTiling(this.densityTiling);
     if (this.lighting) instance.setLighting(this.lighting);
     return instance;
   }
 
   syncMaterialFrom(source: TerrainChunkMesh): void {
+    this.setDensityTiling(source.densityTiling);
     this.setSoilTexture(source.soilTexture);
     this.setRockTexture(source.rockTexture, source.rockTextureFormat);
     this.setRockAlphaTexture(source.rockAlphaTexture);

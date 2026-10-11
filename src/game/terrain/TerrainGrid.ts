@@ -8,6 +8,7 @@ import {
   type TerrainRect,
 } from './TerrainChunk';
 import { TerrainMaterialId } from './TerrainMaterialId';
+import { rockDensityResistance, type RockDensityMask } from './RockDensityMask';
 
 export const defaultTerrainChunkSizeCells = 256;
 const maxChangeHistory = 512;
@@ -38,6 +39,7 @@ export class TerrainGrid {
   totalModifiedPixels = 0;
   /** Immutable generation profile for subcell rendering; collision always uses cells. */
   readonly initialSurfaceMeters: readonly number[] | undefined;
+  readonly rockDensityMask: RockDensityMask | null;
 
   private readonly mutableChunks: TerrainChunk[];
   private readonly changeHistory: TerrainChangeResult[] = [];
@@ -49,6 +51,7 @@ export class TerrainGrid {
     cells?: Uint8Array,
     readonly chunkSizeCells = defaultTerrainChunkSizeCells,
     initialSurfaceMeters?: readonly number[],
+    rockDensityMask: RockDensityMask | null = null,
   ) {
     if (
       !Number.isInteger(columns) ||
@@ -71,6 +74,9 @@ export class TerrainGrid {
     this.initialSurfaceMeters = initialSurfaceMeters
       ? Object.freeze([...initialSurfaceMeters])
       : undefined;
+    this.rockDensityMask = rockDensityMask
+      ? Object.freeze({ ...rockDensityMask, values: Object.freeze([...rockDensityMask.values]) })
+      : null;
     this.cells = cells ? cells.slice() : new Uint8Array(columns * rows);
     this.chunkColumns = Math.ceil(columns / chunkSizeCells);
     this.chunkRows = Math.ceil(rows / chunkSizeCells);
@@ -108,6 +114,12 @@ export class TerrainGrid {
   getMaterialAtWorldPosition(position: Vec2): TerrainMaterialId {
     const cell = this.worldToCell(position);
     return this.getMaterialAtCell(cell.x, cell.y);
+  }
+
+  getResistanceMultiplier(position: Vec2, material: TerrainMaterialId): number {
+    return material === TerrainMaterialId.Rock && this.rockDensityMask
+      ? rockDensityResistance(this.rockDensityMask, position)
+      : 1;
   }
 
   /** Approximately O(1); storage layout is intentionally hidden from callers. */
@@ -231,10 +243,11 @@ export class TerrainGrid {
     )
       return this.emptyChange();
     const size = this.cellSizeMeters;
-    const left = clamp(Math.floor((center.x - radius) / size), 0, this.columns - 1);
-    const right = clamp(Math.floor((center.x + radius) / size), 0, this.columns - 1);
-    const top = clamp(Math.floor((center.y - radius) / size), 0, this.rows - 1);
-    const bottom = clamp(Math.floor((center.y + radius) / size), 0, this.rows - 1);
+    const left = Math.max(0, Math.ceil((center.x - radius) / size - 0.5));
+    const right = Math.min(this.columns - 1, Math.floor((center.x + radius) / size - 0.5));
+    const top = Math.max(0, Math.ceil((center.y - radius) / size - 0.5));
+    const bottom = Math.min(this.rows - 1, Math.floor((center.y + radius) / size - 0.5));
+    if (left > right || top > bottom) return this.emptyChange();
     const radiusSquared = radius * radius;
     const pending = new Map<number, PendingChunkChange>();
     let dirtyRect: TerrainRect | undefined;
@@ -244,8 +257,8 @@ export class TerrainGrid {
       const halfSpanSquared = radiusSquared - dy * dy;
       if (halfSpanSquared < 0) continue;
       const halfSpan = Math.sqrt(halfSpanSquared);
-      const spanLeft = clamp(Math.ceil((center.x - halfSpan) / size - 0.5), left, right);
-      const spanRight = clamp(Math.floor((center.x + halfSpan) / size - 0.5), left, right);
+      const spanLeft = Math.max(left, Math.ceil((center.x - halfSpan) / size - 0.5));
+      const spanRight = Math.min(right, Math.floor((center.x + halfSpan) / size - 0.5));
       if (spanLeft > spanRight) continue;
       const change = this.clearHorizontalSpan(row, spanLeft, spanRight, pending);
       if (!change) continue;

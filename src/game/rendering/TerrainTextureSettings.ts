@@ -8,6 +8,7 @@ export interface TerrainRockTextureAsset {
   readonly label: string;
   readonly assetUrl: string;
   readonly alphaAssetUrl?: string;
+  readonly densityAssetUrl?: string;
   readonly format: TerrainTextureFormat;
 }
 
@@ -44,6 +45,11 @@ export function terrainRockTextureAsset(id: TerrainRockTextureId) {
   const asset = terrainRockTextureAssets.find((candidate) => candidate.id === id);
   if (!asset) throw new Error(`Unknown terrain rock texture: ${id}`);
   return asset;
+}
+
+/** Rendering and simulation must choose the same companion for the Rock contour. */
+export function terrainRockContourAssetUrl(asset: TerrainRockTextureAsset): string | undefined {
+  return asset.densityAssetUrl ?? asset.alphaAssetUrl;
 }
 
 export function terrainTextureKey(settings: TerrainTextureSettings): string {

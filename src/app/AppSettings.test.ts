@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { createDefaultAppSettings, normalizeAppSettings } from './AppSettings';
+import { describe, expect, it, vi } from 'vitest';
+import { createDefaultAppSettings, normalizeAppSettings, saveAppSettings } from './AppSettings';
 
 describe('app settings persistence', () => {
   it('restores every right-panel settings owner', () => {
@@ -34,10 +34,24 @@ describe('app settings persistence', () => {
       cameraZoom: 99,
     });
 
-    expect(restored.gameConfig.physics.gravity).toBe(30);
+    expect(restored.gameConfig.physics.gravity).toBe(40);
     expect(restored.debug.grid).toBe(false);
     expect(restored.terrainSmoothing.quality).toBe(4);
     expect(restored.terrainTexture.orientation).toBe('mirrored');
     expect(restored.cameraZoom).toBe(3);
+  });
+
+  it('recovers from a saved map that cannot place the batteries', () => {
+    const restored = normalizeAppSettings({ gameConfig: { world: { widthMeters: 21 } } });
+    expect(restored.gameConfig.world.widthMeters).toBe(360);
+  });
+
+  it('rejects an unsuccessful settings response', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 500 }));
+    try {
+      await expect(saveAppSettings(createDefaultAppSettings())).rejects.toThrow('HTTP 500');
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

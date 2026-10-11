@@ -1,6 +1,12 @@
 import type { BuildingAnimationConfig } from './BuildingAnimationConfig';
 import type { Vec2 } from '../math/Vec2';
 
+export interface BuildingAnimationAssetStatus {
+  loading: boolean;
+  loaded: string[];
+  failed: string[];
+}
+
 export interface BuildingAnimationPreview {
   config: BuildingAnimationConfig;
   progress: number;

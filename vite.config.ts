@@ -16,12 +16,13 @@ const terrainRockTextures = environmentTextureFiles
   .filter((name) => {
     if (!/\.(?:png|jpe?g|webp|avif)$/i.test(name)) return false;
     const stem = name.slice(0, -extname(name).length);
-    return /^stone/i.test(stem) && !/_(?:alpha|normal)$/i.test(stem);
+    return /^stone/i.test(stem) && !/_(?:alpha|normal|density)$/i.test(stem);
   })
   .map((name) => {
     const id = name.slice(0, -extname(name).length);
     const companionStem = id.replace(/_mixed$/i, '');
     const alphaName = environmentTextureByStem.get(`${companionStem}_alpha`.toLowerCase());
+    const densityName = environmentTextureByStem.get(`${companionStem}_density`.toLowerCase());
     const mixed = /_mixed$/i.test(id);
     return {
       id,
@@ -35,12 +36,16 @@ const terrainRockTextures = environmentTextureFiles
         ? { alphaAssetUrl: `/Textures/Environment/${encodeURIComponent(alphaName)}` }
         : {}),
       format: mixed ? ('albedo-normal-horizontal' as const) : ('albedo' as const),
+      ...(densityName
+        ? { densityAssetUrl: `/Textures/Environment/${encodeURIComponent(densityName)}` }
+        : {}),
     };
   })
   .sort((left, right) => left.id.localeCompare(right.id));
 
 const settingsPath = resolve('settings.json');
 const temporarySettingsPath = resolve('settings.json.tmp');
+let settingsWriteQueue: Promise<void> = Promise.resolve();
 
 function settingsMiddleware(): Connect.NextHandleFunction {
   return async (request, response, next) => {
@@ -62,17 +67,29 @@ function settingsMiddleware(): Connect.NextHandleFunction {
     const chunks: Buffer[] = [];
     request.on('data', (chunk: Buffer) => chunks.push(chunk));
     request.on('end', async () => {
+      let serialized: string;
       try {
         const body = Buffer.concat(chunks).toString('utf8');
         const parsed: unknown = JSON.parse(body);
         if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed))
           throw new Error('Settings must be a JSON object.');
-        await writeFile(temporarySettingsPath, `${JSON.stringify(parsed, null, 2)}\n`, 'utf8');
-        await rename(temporarySettingsPath, settingsPath);
-        response.end('{"saved":true}');
+        serialized = `${JSON.stringify(parsed, null, 2)}\n`;
       } catch {
         response.statusCode = 400;
         response.end('{"error":"Invalid settings JSON"}');
+        return;
+      }
+      try {
+        const write = settingsWriteQueue.then(async () => {
+          await writeFile(temporarySettingsPath, serialized, 'utf8');
+          await rename(temporarySettingsPath, settingsPath);
+        });
+        settingsWriteQueue = write.catch(() => undefined);
+        await write;
+        response.end('{"saved":true}');
+      } catch {
+        response.statusCode = 500;
+        response.end('{"error":"Unable to save settings.json"}');
       }
     });
   };

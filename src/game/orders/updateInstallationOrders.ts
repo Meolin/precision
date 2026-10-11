@@ -51,6 +51,7 @@ export function updateInstallationOrders(state: GameState, config: GameConfig): 
       config,
       state.units,
       target?.id,
+      state.bodies,
     );
     installation.fireControl.lastSolution = solution;
     if (!solution) {

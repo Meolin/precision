@@ -37,11 +37,12 @@ describe('delayed terrain settling', () => {
     advanceTerrainFall(terrain, falling, 0.13);
     expect(falling).toHaveLength(0);
     expect(countMaterial(terrain)).toBe(before);
-    expect(
-      terrain.cells
-        .slice(9 * terrain.columns, 12 * terrain.columns)
-        .filter((cell) => cell === Material.Soil).length,
-    ).toBe(7);
+    let fallenSoil = 0;
+    for (let y = 9; y < 12; y++)
+      for (let x = 7; x <= 13; x++)
+        if (terrain.getMaterialAtCell(x, y) === Material.Soil) fallenSoil++;
+    expect(fallenSoil).toBe(7);
+    for (let y = 9; y < 12; y++) expect(terrain.getMaterialAtCell(6, y)).toBe(Material.Soil);
     expect(terrain.getChangesSince(0)).toHaveLength(2);
   });
 
@@ -50,9 +51,11 @@ describe('delayed terrain settling', () => {
     config.world.widthMeters = 21;
     config.world.heightMeters = 16;
     config.terrain.cellSizeMeters = 1;
+    config.rts.installationsPerPlayer = 1;
     const state = createGameState(config, 123);
     state.terrain = scrapedTerrain();
     state.units = [];
+    state.bodies = [];
     const before = countMaterial(state.terrain);
     queueTerrainSettling(state.pendingTerrainSettling, { minX: 7, minY: 4, maxX: 13, maxY: 4 }, 0);
     for (let tick = 0; tick < 2; tick++) stepSimulation(state, config, 0.02);

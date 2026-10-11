@@ -1,7 +1,30 @@
-export const buildingAnimationSchemaVersion = 5 as const;
+import {
+  buildingTransitionCatalog,
+  buildingTransitionDirections,
+  createDefaultBuildingTransition,
+  transitionParameterDefaults,
+  type BuildingTransitionType,
+} from './BuildingAnimationTransitions';
 
-export type BuildingTransitionType = 'crossfade' | 'reveal' | 'dissolve';
-export type DissolveDirection = 'uniform' | 'bottom-to-top' | 'top-to-bottom' | 'center-out';
+import {
+  animationEffectParameters,
+  isImageStage,
+  effectParameter,
+  animationFilterCatalog,
+  stageTrackProperties,
+  type AnimationEffectProperty,
+  type AnimationFilterType,
+  type AnimationMediaKind,
+  type AnimationParticlePreset,
+  type ParticleCurvePoint,
+  type ParticleColorPoint,
+  type AnimationEffectPreset,
+} from './BuildingAnimationEffects';
+
+export const buildingAnimationSchemaVersion = 9 as const;
+
+export type { BuildingTransitionType } from './BuildingAnimationTransitions';
+export type DissolveDirection = (typeof buildingTransitionDirections)[number]['id'];
 export type BuildingAnimationEasing = 'linear' | 'ease-in' | 'ease-out' | 'ease-in-out';
 export type BuildingAnimationBlendMode = 'normal' | 'add' | 'screen' | 'multiply' | 'overlay';
 export type BuildingTextureScaleMode = 'linear' | 'nearest';
@@ -16,6 +39,35 @@ export const buildingAnimationTrackProperties = [
   'skewY',
   'pivotX',
   'pivotY',
+  'fxRate',
+  'fxLifetime',
+  'fxSpeed',
+  'fxSpread',
+  'fxGravity',
+  'fxSize',
+  'fxRadius',
+  'fxStrength',
+  'fxDirection',
+  'fxGravityAngle',
+  'fxEmitterRadius',
+  'fxEmitterWidth',
+  'fxEmitterHeight',
+  'fxWind',
+  'fxTurbulence',
+  'fxFlicker',
+  'fxStretch',
+  'fxTrail',
+  'fxFrequency',
+  'fxWaveLength',
+  'fxSoftness',
+  'fxBrightness',
+  'fxContrast',
+  'fxSaturation',
+  'fxHue',
+  'fxRed',
+  'fxGreen',
+  'fxBlue',
+  'fxFrameRate',
 ] as const;
 export type BuildingAnimationTrackProperty = (typeof buildingAnimationTrackProperties)[number];
 export type BuildingKeyInterpolation =
@@ -55,7 +107,36 @@ export interface BuildingTextureOptimization {
   anisotropy: 1 | 2 | 4 | 8 | 16;
 }
 
-export interface BuildingAnimationStage {
+export interface BuildingAnimationStage extends Partial<Record<AnimationEffectProperty, number>> {
+  /** Missing kind is a legacy image resource. Procedural resources never load a texture. */
+  kind?: AnimationMediaKind;
+  parentId?: string;
+  filterType?: AnimationFilterType;
+  particlePreset?: AnimationParticlePreset;
+  color?: string;
+  seed?: number;
+  enabled?: boolean;
+  hidden?: boolean;
+  solo?: boolean;
+  locked?: boolean;
+  coordinateSpace?: 'local' | 'composition';
+  particleSpace?: 'local' | 'composition';
+  gravitySpace?: 'local' | 'composition';
+  emissionMode?: 'continuous' | 'burst';
+  endBehavior?: 'cut' | 'tail' | 'fade';
+  emissionStart?: number;
+  burstCount?: number;
+  prewarmSeconds?: number;
+  particleBudget?: number;
+  emitterShape?: 'point' | 'line' | 'circle' | 'rectangle' | 'contour';
+  shapeSourceId?: string;
+  particleTextureId?: string;
+  spriteColumns?: number;
+  spriteRows?: number;
+  blendMode?: BuildingAnimationBlendMode;
+  sizeCurve?: ParticleCurvePoint[];
+  alphaCurve?: ParticleCurvePoint[];
+  colorCurve?: ParticleColorPoint[];
   id: string;
   name: string;
   assetId: string;
@@ -95,6 +176,37 @@ export interface BuildingAnimationTransition {
   edgeColor: string;
   easing: BuildingAnimationEasing;
   blendMode: BuildingAnimationBlendMode;
+  softness: number;
+  strength: number;
+  segments: number;
+  angle: number;
+  centerX: number;
+  centerY: number;
+  seed: number;
+  reverse: boolean;
+}
+
+/** Audio times are seconds; marker times use normalized animation progress. */
+export interface BuildingAnimationSound {
+  id: string;
+  name: string;
+  assetId: string;
+  sourceDuration: number;
+  startSeconds: number;
+  offsetSeconds: number;
+  durationSeconds: number;
+  volume: number;
+  muted: boolean;
+  solo: boolean;
+  fadeInSeconds: number;
+  fadeOutSeconds: number;
+  waveform: number[];
+}
+
+export interface BuildingAnimationMarker {
+  id: string;
+  name: string;
+  time: number;
 }
 
 export interface BuildingAnimationConfig {
@@ -111,7 +223,9 @@ export interface BuildingAnimationConfig {
   tracks: BuildingAnimationTrack[];
   transitions: BuildingAnimationTransition[];
   vfx: unknown[];
-  sounds: unknown[];
+  sounds: BuildingAnimationSound[];
+  markers: BuildingAnimationMarker[];
+  effectPresets?: AnimationEffectPreset[];
 }
 
 export interface BuildingAnimationValidationResult {
@@ -151,8 +265,12 @@ export function validateBuildingAnimationConfig(
     errors.push('vfx and sounds must be arrays.');
   if (!config.timeline || typeof config.timeline !== 'object')
     return { valid: false, errors: [...errors, 'Timeline is required.'] };
-  if (!finite(config.timeline.durationSeconds) || config.timeline.durationSeconds <= 0)
-    errors.push('Timeline duration must be positive.');
+  if (
+    !finite(config.timeline.durationSeconds) ||
+    config.timeline.durationSeconds <= 0 ||
+    config.timeline.durationSeconds > 600
+  )
+    errors.push('Timeline duration must be in (0, 600] seconds.');
   if (
     !Number.isInteger(config.timeline.frameRate) ||
     config.timeline.frameRate < 1 ||
@@ -209,7 +327,76 @@ export function validateBuildingAnimationConfig(
     errors.push('Texture scaleMode is invalid.');
   if (![1, 2, 4, 8, 16].includes(config.textureOptimization.anisotropy))
     errors.push('Texture anisotropy is invalid.');
-  if (config.stages.length < 2) errors.push('At least two stages are required.');
+  if (config.stages.length < 1) errors.push('At least one stage is required.');
+
+  const soundIds = new Set<string>();
+  for (const sound of Array.isArray(config.sounds) ? config.sounds : []) {
+    if (!sound || typeof sound !== 'object') {
+      errors.push('Every sound must be an object.');
+      continue;
+    }
+    if (typeof sound.id !== 'string' || !sound.id.trim() || soundIds.has(sound.id))
+      errors.push('Sounds need unique IDs.');
+    soundIds.add(sound.id);
+    if (typeof sound.name !== 'string' || !sound.name.trim())
+      errors.push('Sound name is required.');
+    if (
+      typeof sound.assetId !== 'string' ||
+      !sound.assetId.trim() ||
+      sound.assetId.startsWith('blob:')
+    )
+      errors.push('Sound assetId must be a stable resource path.');
+    if (
+      ![
+        sound.sourceDuration,
+        sound.startSeconds,
+        sound.offsetSeconds,
+        sound.durationSeconds,
+        sound.volume,
+        sound.fadeInSeconds,
+        sound.fadeOutSeconds,
+      ].every(finite) ||
+      sound.sourceDuration <= 0 ||
+      sound.startSeconds < 0 ||
+      sound.offsetSeconds < 0 ||
+      sound.durationSeconds <= 0 ||
+      sound.offsetSeconds + sound.durationSeconds > sound.sourceDuration + 0.000001 ||
+      sound.volume < 0 ||
+      sound.volume > 1 ||
+      sound.fadeInSeconds < 0 ||
+      sound.fadeOutSeconds < 0 ||
+      sound.fadeInSeconds + sound.fadeOutSeconds > sound.durationSeconds + 0.000001
+    )
+      errors.push('Sound timing, volume or fades are invalid.');
+    if (typeof sound.muted !== 'boolean' || typeof sound.solo !== 'boolean')
+      errors.push('Sound mute/solo flags must be boolean.');
+    if (
+      !Array.isArray(sound.waveform) ||
+      sound.waveform.length > 1024 ||
+      !sound.waveform.every((point) => finite(point) && point >= 0 && point <= 1)
+    )
+      errors.push('Sound waveform must contain up to 1024 normalized peaks.');
+  }
+  if (!Array.isArray(config.markers)) errors.push('Markers must be an array.');
+  const markerIds = new Set<string>();
+  for (const marker of Array.isArray(config.markers) ? config.markers : []) {
+    if (!marker || typeof marker !== 'object') {
+      errors.push('Every marker must be an object.');
+      continue;
+    }
+    if (
+      typeof marker.id !== 'string' ||
+      !marker.id.trim() ||
+      markerIds.has(marker.id) ||
+      typeof marker.name !== 'string' ||
+      !marker.name.trim() ||
+      !finite(marker.time) ||
+      marker.time < 0 ||
+      marker.time > 1
+    )
+      errors.push('Marker ID, name or time is invalid.');
+    markerIds.add(marker.id);
+  }
 
   const stageIds = new Set<string>();
   const assetIds = new Set<string>();
@@ -231,9 +418,142 @@ export function validateBuildingAnimationConfig(
     assetIds.add(stage.assetId);
     if (!finite(stage.milestone) || stage.milestone < 0 || stage.milestone > 1)
       errors.push(`Stage ${index + 1} milestone must be between 0 and 1.`);
-    if (stage.milestone <= previousMilestone)
+    if (isImageStage(stage) && stage.milestone <= previousMilestone)
       errors.push(`Stage ${index + 1} milestone must be greater than the previous milestone.`);
-    previousMilestone = stage.milestone;
+    if (isImageStage(stage)) previousMilestone = stage.milestone;
+    if (
+      stage.kind !== undefined &&
+      !['image', 'particles', 'light', 'filter', 'ring'].includes(stage.kind)
+    )
+      errors.push('Unknown animation media kind.');
+    if (stage.parentId !== undefined && stage.kind !== 'filter')
+      errors.push('Only filters can depend on a resource.');
+    if (!isImageStage(stage)) {
+      if (!hexColor.test(stage.color ?? '')) errors.push('Effect color must be #RRGGBB.');
+      if (!Number.isInteger(stage.seed) || stage.seed! < 0 || stage.seed! > 65535)
+        errors.push('Effect seed must be an integer in [0, 65535].');
+      if (typeof stage.enabled !== 'boolean') errors.push('Effect enabled must be boolean.');
+      if (
+        stage.kind === 'particles' &&
+        !['sparks', 'smoke', 'embers'].includes(stage.particlePreset ?? '')
+      )
+        errors.push('Unknown particle preset.');
+      if (stage.kind === 'filter') {
+        if (!Object.hasOwn(animationFilterCatalog, stage.filterType ?? ''))
+          errors.push('Unknown filter type.');
+        if (
+          !config.stages.some(
+            (parent) =>
+              parent &&
+              parent.id === stage.parentId &&
+              parent.id !== stage.id &&
+              parent.kind !== 'filter',
+          )
+        )
+          errors.push('Filter must reference an existing image or generator.');
+      }
+      for (const property of stageTrackProperties(stage)) {
+        if (!(property in animationEffectParameters)) continue;
+        const range = effectParameter(stage, property as AnimationEffectProperty);
+        const value = stage[property];
+        if (value !== undefined && (!finite(value) || value < range.min || value > range.max))
+          errors.push(`Effect ${property} is outside its supported range.`);
+      }
+    }
+    for (const property of ['hidden', 'solo', 'locked'] as const)
+      if (stage[property] !== undefined && typeof stage[property] !== 'boolean')
+        errors.push(`Layer ${property} must be boolean.`);
+    for (const property of ['coordinateSpace', 'particleSpace', 'gravitySpace'] as const)
+      if (stage[property] !== undefined && !['local', 'composition'].includes(stage[property]!))
+        errors.push('Unknown effect coordinate space.');
+    if (
+      stage.emissionStart !== undefined &&
+      (!finite(stage.emissionStart) || stage.emissionStart < -1 || stage.emissionStart > 1)
+    )
+      errors.push('Invalid emission start.');
+    if (stage.kind === 'particles') {
+      if (stage.emissionMode !== undefined && !['continuous', 'burst'].includes(stage.emissionMode))
+        errors.push('Unknown emission mode.');
+      if (stage.endBehavior !== undefined && !['cut', 'tail', 'fade'].includes(stage.endBehavior))
+        errors.push('Unknown particle end behavior.');
+      if (
+        stage.emitterShape !== undefined &&
+        !['point', 'line', 'circle', 'rectangle', 'contour'].includes(stage.emitterShape)
+      )
+        errors.push('Unknown emitter shape.');
+      for (const [name, value, min, max] of [
+        ['burstCount', stage.burstCount, 1, 1200],
+        ['particleBudget', stage.particleBudget, 1, 1200],
+        ['prewarmSeconds', stage.prewarmSeconds, 0, 10],
+        ['spriteColumns', stage.spriteColumns, 1, 32],
+        ['spriteRows', stage.spriteRows, 1, 32],
+      ] as const)
+        if (
+          value !== undefined &&
+          (!finite(value) ||
+            value < min ||
+            value > max ||
+            (name !== 'prewarmSeconds' && !Number.isInteger(value)))
+        )
+          errors.push(`Invalid particle ${name}.`);
+      if (
+        stage.particleTextureId !== undefined &&
+        (!stage.particleTextureId.trim() || stage.particleTextureId.startsWith('blob:'))
+      )
+        errors.push('Particle texture ID must be a stable asset path.');
+      if (
+        stage.emitterShape === 'contour' &&
+        stage.shapeSourceId !== undefined &&
+        !config.stages.some(
+          (source) => source && source.id === stage.shapeSourceId && isImageStage(source),
+        )
+      )
+        errors.push('Contour emission requires an image resource.');
+      for (const name of ['sizeCurve', 'alphaCurve'] as const) {
+        const curve = stage[name];
+        if (
+          curve !== undefined &&
+          (!Array.isArray(curve) ||
+            curve.length < 2 ||
+            curve.length > 16 ||
+            curve.some(
+              (point, i) =>
+                !point ||
+                !finite(point.age) ||
+                point.age < 0 ||
+                point.age > 1 ||
+                (i > 0 && point.age <= curve[i - 1]!.age) ||
+                !finite(point.value) ||
+                point.value < 0 ||
+                point.value > (name === 'alphaCurve' ? 1 : 10),
+            ) ||
+            curve[0]?.age !== 0 ||
+            curve.at(-1)?.age !== 1)
+        )
+          errors.push(`Invalid ${name}.`);
+      }
+      const colors = stage.colorCurve;
+      if (
+        colors !== undefined &&
+        (!Array.isArray(colors) ||
+          colors.length > 16 ||
+          colors.some(
+            (point, i) =>
+              !point ||
+              !finite(point.age) ||
+              point.age < 0 ||
+              point.age > 1 ||
+              !hexColor.test(point.color) ||
+              (i > 0 && point.age <= colors[i - 1]!.age),
+          ))
+      )
+        errors.push('Invalid particle color curve.');
+    }
+    if (
+      stage.blendMode !== undefined &&
+      !['normal', 'add', 'screen', 'multiply', 'overlay'].includes(stage.blendMode)
+    )
+      errors.push('Unknown resource blend mode.');
     if (
       !finite(stage.inPoint) ||
       !finite(stage.outPoint) ||
@@ -270,7 +590,9 @@ export function validateBuildingAnimationConfig(
     )
       errors.push(`Stage ${index + 1} transform defaults are invalid.`);
   }
-  if (config.stages[0]?.milestone !== 0) errors.push('The first milestone must be 0.');
+  const imageStages = config.stages.filter((stage) => stage && isImageStage(stage));
+  if (imageStages.length && imageStages[0]?.milestone !== 0)
+    errors.push('The first milestone must be 0.');
 
   const trackKeys = new Set<string>();
   const keyIds = new Set<string>();
@@ -282,6 +604,9 @@ export function validateBuildingAnimationConfig(
     if (!stageIds.has(track.stageId)) errors.push('A track references an unknown stage.');
     if (!buildingAnimationTrackProperties.includes(track.property))
       errors.push('A track has an unsupported property.');
+    const trackStage = config.stages.find((stage) => stage?.id === track.stageId);
+    if (trackStage && !stageTrackProperties(trackStage).includes(track.property))
+      errors.push('Track property is not supported by this resource.');
     const trackKey = `${track.stageId}:${track.property}`;
     if (trackKeys.has(trackKey)) errors.push(`Track ${trackKey} is duplicated.`);
     trackKeys.add(trackKey);
@@ -302,6 +627,11 @@ export function validateBuildingAnimationConfig(
         errors.push(`Track ${trackKey} key times must be strictly increasing in [0, 1].`);
       previousTime = key.time;
       if (!finite(key.value)) errors.push(`Track ${trackKey} key values must be finite.`);
+      if (track.property in animationEffectParameters) {
+        const range = effectParameter(trackStage, track.property as AnimationEffectProperty);
+        if (key.value < range.min || key.value > range.max)
+          errors.push(`Track ${trackKey} value is outside its supported range.`);
+      }
       if ((track.property === 'scaleX' || track.property === 'scaleY') && key.value <= 0)
         errors.push(`Track ${trackKey} scale must be positive.`);
       if (track.property === 'opacity' && (key.value < 0 || key.value > 1))
@@ -326,9 +656,9 @@ export function validateBuildingAnimationConfig(
       item && typeof item === 'object' ? [`${item.fromStageId}:${item.toStageId}`] : [],
     ),
   );
-  for (let index = 1; index < config.stages.length; index++) {
-    const from = config.stages[index - 1];
-    const to = config.stages[index];
+  for (let index = 1; index < imageStages.length; index++) {
+    const from = imageStages[index - 1];
+    const to = imageStages[index];
     if (!from || typeof from !== 'object' || !to || typeof to !== 'object') continue;
     if (!transitionKeys.has(`${from.id}:${to.id}`))
       errors.push(`Missing transition ${from.id} → ${to.id}.`);
@@ -340,9 +670,15 @@ export function validateBuildingAnimationConfig(
     }
     if (!stageIds.has(transition.fromStageId) || !stageIds.has(transition.toStageId))
       errors.push('A transition references an unknown stage.');
-    if (!['crossfade', 'reveal', 'dissolve'].includes(transition.type))
+    if (
+      ![transition.fromStageId, transition.toStageId].every((id) =>
+        imageStages.some((stage) => stage.id === id),
+      )
+    )
+      errors.push('Transitions can only connect image stages.');
+    if (!buildingTransitionCatalog.some((entry) => entry.id === transition.type))
       errors.push('Transition type is invalid.');
-    if (!['uniform', 'bottom-to-top', 'top-to-bottom', 'center-out'].includes(transition.direction))
+    if (!buildingTransitionDirections.some((entry) => entry.id === transition.direction))
       errors.push('Transition direction is invalid.');
     if (!['linear', 'ease-in', 'ease-out', 'ease-in-out'].includes(transition.easing))
       errors.push('Transition easing is invalid.');
@@ -358,6 +694,62 @@ export function validateBuildingAnimationConfig(
       ].every(finite)
     )
       errors.push('Transition numeric parameters must be finite.');
+    const ranges: [string, number, number, number][] = [
+      ['softness', transition.softness, 0, 1],
+      ['strength', transition.strength, 0, 2],
+      ['segments', transition.segments, 2, 64],
+      ['angle', transition.angle, -360, 360],
+      ['centerX', transition.centerX, 0, 1],
+      ['centerY', transition.centerY, 0, 1],
+      ['seed', transition.seed, 0, 65535],
+    ];
+    for (const [name, value, min, max] of ranges)
+      if (!finite(value) || value < min || value > max)
+        errors.push(`Transition ${name} must be between ${min} and ${max}.`);
+    if (!Number.isInteger(transition.segments) || !Number.isInteger(transition.seed))
+      errors.push('Transition segments and seed must be integers.');
+    if (typeof transition.reverse !== 'boolean') errors.push('Transition reverse must be boolean.');
+  }
+  if (config.effectPresets !== undefined) {
+    const presetIds = new Set<string>();
+    if (!Array.isArray(config.effectPresets) || config.effectPresets.length > 100)
+      errors.push('Invalid effect preset library.');
+    else
+      for (const preset of config.effectPresets) {
+        if (
+          !preset ||
+          typeof preset.id !== 'string' ||
+          !preset.id.trim() ||
+          typeof preset.name !== 'string' ||
+          !preset.name.trim() ||
+          !Array.isArray(preset.stages) ||
+          !preset.stages.length ||
+          !Array.isArray(preset.tracks)
+        ) {
+          errors.push('Invalid effect preset.');
+          continue;
+        }
+        if (presetIds.has(preset.id)) errors.push('Effect preset IDs must be unique.');
+        presetIds.add(preset.id);
+        if (
+          preset.durationSeconds !== undefined &&
+          (!finite(preset.durationSeconds) ||
+            preset.durationSeconds <= 0 ||
+            preset.durationSeconds > 1200)
+        )
+          errors.push('Invalid effect preset duration.');
+        const presetConfig = {
+          ...config,
+          stages: preset.stages,
+          tracks: preset.tracks,
+          transitions: [],
+          sounds: [],
+          markers: [],
+          effectPresets: [],
+        };
+        if (!validateBuildingAnimationConfig(presetConfig).valid)
+          errors.push(`Invalid effect preset: ${preset.name}.`);
+      }
   }
   return { valid: errors.length === 0, errors };
 }
@@ -371,6 +763,7 @@ export function loadBuildingAnimationConfig(value: unknown): BuildingAnimationCo
     ? ({
         ...imported,
         schemaVersion: buildingAnimationSchemaVersion,
+        markers: [],
         timeline:
           imported.schemaVersion === 4
             ? imported.timeline
@@ -393,7 +786,72 @@ export function loadBuildingAnimationConfig(value: unknown): BuildingAnimationCo
           : imported.stages,
         tracks: imported.schemaVersion === 2 ? [] : imported.tracks,
       } as unknown as BuildingAnimationConfig)
-    : (value as BuildingAnimationConfig);
+    : imported.schemaVersion === 5 ||
+        imported.schemaVersion === 6 ||
+        imported.schemaVersion === 7 ||
+        imported.schemaVersion === 8
+      ? ({
+          ...imported,
+          schemaVersion: buildingAnimationSchemaVersion,
+          markers: imported.schemaVersion !== 5 ? imported.markers : [],
+        } as unknown as BuildingAnimationConfig)
+      : (value as BuildingAnimationConfig);
+  if (
+    [2, 3, 4, 5, 6].includes(imported.schemaVersion as number) &&
+    Array.isArray(config.transitions)
+  )
+    config.transitions = config.transitions.map((transition) =>
+      transition && typeof transition === 'object'
+        ? {
+            ...transitionParameterDefaults,
+            ...transition,
+            // The legacy reveal was always a hard left-to-right mask.
+            ...(transition.type === 'reveal' ? { direction: 'left-to-right' as const } : {}),
+          }
+        : transition,
+    );
+  if (
+    [2, 3, 4, 5, 6, 7, 8].includes(imported.schemaVersion as number) &&
+    Array.isArray(config.stages)
+  ) {
+    config.stages = config.stages.map((stage) => {
+      if (!stage || isImageStage(stage)) return stage;
+      const migrated = {
+        ...stage,
+        particleSpace: 'local' as const,
+        coordinateSpace: 'composition' as const,
+        endBehavior: 'cut' as const,
+        emissionStart: stage.inPoint,
+      };
+      for (const property of stageTrackProperties(migrated))
+        if (property in animationEffectParameters && migrated[property] === undefined)
+          migrated[property] = effectParameter(migrated, property as AnimationEffectProperty).value;
+      if (migrated.fxStrength !== undefined) {
+        const range = effectParameter(migrated, 'fxStrength');
+        migrated.fxStrength = Math.max(range.min, Math.min(range.max, migrated.fxStrength));
+      }
+      const color = Number.parseInt(stage.color?.slice(1) ?? 'ffb454', 16);
+      migrated.fxRed = color >> 16;
+      migrated.fxGreen = (color >> 8) & 255;
+      migrated.fxBlue = color & 255;
+      return migrated;
+    });
+    if (Array.isArray(config.tracks))
+      config.tracks = config.tracks.map((track) => {
+        if (!track || track.property !== 'fxStrength' || !Array.isArray(track.keys)) return track;
+        const range = effectParameter(
+          config.stages.find((stage) => stage?.id === track.stageId),
+          'fxStrength',
+        );
+        return {
+          ...track,
+          keys: track.keys.map((key) => ({
+            ...key,
+            value: Math.max(range.min, Math.min(range.max, key.value)),
+          })),
+        };
+      });
+  }
   const result = validateBuildingAnimationConfig(config);
   if (!result.valid) throw new Error(result.errors.join('\n'));
   return structuredClone(config);
@@ -434,20 +892,11 @@ export function createDefaultBuildingAnimationConfig(): BuildingAnimationConfig 
     stages,
     timeline: { durationSeconds: 4, frameRate: 30, workAreaStart: 0, workAreaEnd: 1 },
     tracks: [],
-    transitions: stages.slice(1).map((stage, index) => ({
-      fromStageId: stages[index]!.id,
-      toStageId: stage.id,
-      type: 'dissolve',
-      direction: 'bottom-to-top',
-      noiseScale: 8,
-      directionStrength: 0.68,
-      edgeWidth: 0.08,
-      edgeIntensity: 1,
-      edgeColor: '#85d7e8',
-      easing: 'ease-out',
-      blendMode: 'normal',
-    })),
+    transitions: stages
+      .slice(1)
+      .map((stage, index) => createDefaultBuildingTransition(stages[index]!.id, stage.id)),
     vfx: [],
     sounds: [],
+    markers: [],
   };
 }

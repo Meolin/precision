@@ -11,79 +11,22 @@ import {
 import type {
   BuildingAnimationBlendMode,
   BuildingAnimationConfig,
-  BuildingAnimationEasing,
   BuildingAnimationTransition,
   BuildingAnimationTrackProperty,
-  DissolveDirection,
 } from './BuildingAnimationConfig';
 import { defaultTrackValue, sampleBuildingTrack } from './BuildingAnimationKeyframes';
+import type { BuildingAnimationAssetStatus } from './BuildingAnimationPreview';
+import {
+  buildingTransitionDirections,
+  sampleBuildingTransition,
+  type TransitionPose,
+} from './BuildingAnimationTransitions';
+import { buildingTransitionVertex, buildingTransitionFragment } from './BuildingTransitionShader';
+import { animationTextureAssets, isImageStage } from './BuildingAnimationEffects';
+import { animationResourceEnabled } from './BuildingAnimationTransform';
+import { BuildingAnimationEffectRenderer } from './BuildingAnimationEffectRenderer';
 
 export type BuildingTextureResolver = (assetId: string) => string | Texture | Promise<Texture>;
-
-const vertex = `
-in vec2 aPosition;
-out vec2 vTextureCoord;
-uniform vec4 uInputSize;
-uniform vec4 uOutputFrame;
-uniform vec4 uOutputTexture;
-void main(void) {
-  vec2 position = aPosition * uOutputFrame.zw + uOutputFrame.xy;
-  position.x = position.x * (2.0 / uOutputTexture.x) - 1.0;
-  position.y = position.y * (2.0 * uOutputTexture.z / uOutputTexture.y) - uOutputTexture.z;
-  gl_Position = vec4(position, 0.0, 1.0);
-  vTextureCoord = aPosition * (uOutputFrame.zw * uInputSize.zw);
-}`;
-
-const fragment = `
-in vec2 vTextureCoord;
-out vec4 finalColor;
-uniform sampler2D uTexture;
-uniform float uProgress;
-uniform float uNoiseScale;
-uniform float uDirectionStrength;
-uniform float uDirection;
-uniform float uEdgeWidth;
-uniform float uEdgeIntensity;
-uniform vec3 uEdgeColor;
-uniform float uEdgeBlendMode;
-float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123); }
-float valueNoise(vec2 p) {
-  vec2 i = floor(p); vec2 f = fract(p); f = f * f * (3.0 - 2.0 * f);
-  return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), f.x), mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), f.x), f.y);
-}
-void main(void) {
-  vec4 source = texture(uTexture, vTextureCoord);
-  float directional = 0.5;
-  if (uDirection < 1.5 && uDirection > 0.5) directional = 1.0 - vTextureCoord.y;
-  else if (uDirection < 2.5 && uDirection > 1.5) directional = vTextureCoord.y;
-  else if (uDirection > 2.5) directional = abs(vTextureCoord.y - 0.5) * 2.0;
-  float noiseValue = valueNoise(vTextureCoord * max(1.0, uNoiseScale));
-  float threshold = mix(noiseValue, directional, clamp(uDirectionStrength, 0.0, 1.0));
-  float shown = step(threshold, uProgress);
-  float edge = (1.0 - smoothstep(0.0, max(0.001, uEdgeWidth), abs(threshold - uProgress))) * uEdgeIntensity;
-  float edgeAmount = clamp(edge, 0.0, 1.0);
-  float alpha = source.a * max(shown, edgeAmount);
-  vec3 base = source.a > 0.0 ? source.rgb / source.a : vec3(0.0);
-  vec3 effect = uEdgeColor;
-  vec3 blended = effect;
-  if (uEdgeBlendMode > 0.5 && uEdgeBlendMode < 1.5) blended = min(vec3(1.0), base + effect);
-  else if (uEdgeBlendMode > 1.5 && uEdgeBlendMode < 2.5) blended = 1.0 - (1.0 - base) * (1.0 - effect);
-  else if (uEdgeBlendMode > 2.5 && uEdgeBlendMode < 3.5) blended = base * effect;
-  else if (uEdgeBlendMode > 3.5) {
-    vec3 low = 2.0 * base * effect;
-    vec3 high = 1.0 - 2.0 * (1.0 - base) * (1.0 - effect);
-    blended = mix(low, high, step(vec3(0.5), base));
-  }
-  vec3 rgb = mix(base, blended, edgeAmount);
-  finalColor = vec4(rgb * alpha, alpha);
-}`;
-
-const directionIndex: Record<DissolveDirection, number> = {
-  uniform: 0,
-  'bottom-to-top': 1,
-  'top-to-bottom': 2,
-  'center-out': 3,
-};
 
 const edgeBlendIndex: Record<BuildingAnimationBlendMode, number> = {
   normal: 0,
@@ -111,18 +54,12 @@ const loadBlobTexture = (url: string): Promise<Texture> =>
     image.src = url;
   });
 
-const ease = (value: number, easing: BuildingAnimationEasing) => {
-  if (easing === 'ease-in') return value * value * value;
-  if (easing === 'ease-out') return 1 - Math.pow(1 - value, 3);
-  if (easing === 'ease-in-out')
-    return value < 0.5 ? 4 * value ** 3 : 1 - Math.pow(-2 * value + 2, 3) / 2;
-  return value;
-};
-
 const degreesToRadians = (degrees: number) => (degrees * Math.PI) / 180;
 
-function createDissolveFilter() {
+function createTransitionFilter() {
   const uniforms = new UniformGroup({
+    uEffect: { value: 0, type: 'f32' },
+    uIncoming: { value: 1, type: 'f32' },
     uProgress: { value: 0, type: 'f32' },
     uNoiseScale: { value: 8, type: 'f32' },
     uDirectionStrength: { value: 0.68, type: 'f32' },
@@ -131,10 +68,22 @@ function createDissolveFilter() {
     uEdgeIntensity: { value: 1, type: 'f32' },
     uEdgeColor: { value: hexRgb('#85d7e8'), type: 'vec3<f32>' },
     uEdgeBlendMode: { value: 0, type: 'f32' },
+    uSoftness: { value: 0.03, type: 'f32' },
+    uStrength: { value: 0.5, type: 'f32' },
+    uSegments: { value: 12, type: 'f32' },
+    uAngle: { value: 0, type: 'f32' },
+    uCenter: { value: new Float32Array([0.5, 0.5]), type: 'vec2<f32>' },
+    uSeed: { value: 0, type: 'f32' },
+    uReverse: { value: 0, type: 'f32' },
+    uAspect: { value: 1, type: 'f32' },
   });
   const filter = new Filter({
-    glProgram: GlProgram.from({ vertex, fragment, name: 'building-dissolve' }),
-    resources: { dissolveUniforms: uniforms },
+    glProgram: GlProgram.from({
+      vertex: buildingTransitionVertex,
+      fragment: buildingTransitionFragment,
+      name: 'building-transition',
+    }),
+    resources: { transitionUniforms: uniforms },
     antialias: 'inherit',
   });
   return { filter, uniforms };
@@ -144,19 +93,29 @@ export class BuildingAnimationPlayer {
   readonly container = new Container();
   private config: BuildingAnimationConfig;
   private sprites = new Map<string, Sprite>();
+  private effects = new BuildingAnimationEffectRenderer();
   private loadRevision = 0;
   private progress = 0;
-  private revealMask = new Graphics();
   private hitbox = new Graphics();
-  private dissolve = createDissolveFilter();
+  private incomingTransition = createTransitionFilter();
+  private outgoingTransition = createTransitionFilter();
   private ownedTextures = new Set<Texture>();
+  private assetTextures = new Map<string, Texture>();
+  private ghost = new Sprite();
+  private onionStageIndex: number | null = null;
+  private disposed = false;
+  private onAssets?: (status: BuildingAnimationAssetStatus) => void;
 
   constructor(options: {
     config: BuildingAnimationConfig;
     resolveTexture?: BuildingTextureResolver;
+    onAssets?: (status: BuildingAnimationAssetStatus) => void;
   }) {
     this.config = structuredClone(options.config);
-    this.container.addChild(this.revealMask, this.hitbox);
+    this.effects.sync(this.config);
+    this.onAssets = options.onAssets;
+    this.ghost.visible = false;
+    this.container.addChild(this.ghost, this.hitbox);
     void this.loadTextures(options.resolveTexture);
   }
 
@@ -165,26 +124,35 @@ export class BuildingAnimationPlayer {
     resolveTexture?: BuildingTextureResolver,
     reloadTextures = false,
   ) {
+    if (this.disposed) return;
     const optimizationChanged =
       JSON.stringify(this.config.textureOptimization) !==
       JSON.stringify(config.textureOptimization);
     const assetIdsChanged =
-      this.config.stages.map((stage) => stage.assetId).join('|') !==
-      config.stages.map((stage) => stage.assetId).join('|');
+      JSON.stringify([
+        animationTextureAssets(this.config),
+        this.config.stages.filter(isImageStage).map((stage) => [stage.id, stage.assetId]),
+      ]) !==
+      JSON.stringify([
+        animationTextureAssets(config),
+        config.stages.filter(isImageStage).map((stage) => [stage.id, stage.assetId]),
+      ]);
     this.config = structuredClone(config);
+    this.effects.sync(this.config);
     if (assetIdsChanged || reloadTextures) await this.loadTextures(resolveTexture);
     else {
       this.arrangeSprites();
       if (optimizationChanged) this.applyTextureOptimization();
     }
+    if (this.disposed) return;
     this.drawHitbox();
     this.setProgress(this.progress);
   }
 
   private applyTextureOptimization(): void {
     const optimization = this.config.textureOptimization;
-    for (const sprite of this.sprites.values()) {
-      const source = sprite.texture.source;
+    for (const texture of this.assetTextures.values()) {
+      const source = texture.source;
       source.scaleMode = optimization.scaleMode;
       source.mipmapFilter = optimization.scaleMode;
       source.autoGenerateMipmaps = optimization.mipmaps;
@@ -194,15 +162,16 @@ export class BuildingAnimationPlayer {
   }
 
   private arrangeSprites(): void {
-    for (const sprite of this.sprites.values())
+    for (const sprite of [...this.sprites.values(), ...this.effects.generators.values()])
       if (sprite.parent === this.container) this.container.removeChild(sprite);
     for (const stage of [...this.config.stages].sort(
       (left, right) => right.layerOrder - left.layerOrder,
     )) {
-      const sprite = this.sprites.get(stage.id);
+      const sprite = this.sprites.get(stage.id) ?? this.effects.generators.get(stage.id);
       if (sprite)
         this.container.addChildAt(sprite, Math.max(0, this.container.children.length - 1));
     }
+    this.container.setChildIndex(this.ghost, this.container.children.length - 2);
   }
 
   private drawHitbox(): void {
@@ -220,10 +189,15 @@ export class BuildingAnimationPlayer {
 
   private async loadTextures(resolveTexture?: BuildingTextureResolver) {
     const revision = ++this.loadRevision;
+    const stages = this.config.stages.filter(isImageStage);
+    const assetIds = animationTextureAssets(this.config);
+    this.onAssets?.({ loading: true, loaded: [], failed: [] });
+    this.ghost.visible = false;
+    this.ghost.texture = Texture.EMPTY;
     const results = await Promise.all(
-      this.config.stages.map(async (stage) => {
+      assetIds.map(async (assetId) => {
         try {
-          const resolved = resolveTexture?.(stage.assetId) ?? stage.assetId;
+          const resolved = resolveTexture?.(assetId) ?? assetId;
           const owned = typeof resolved === 'string' && resolved.startsWith('blob:');
           const texture =
             typeof resolved === 'string'
@@ -232,44 +206,68 @@ export class BuildingAnimationPlayer {
                 : await Assets.load<Texture>(resolved)
               : await resolved;
           if (!texture?.isTexture) return null;
-          return { id: stage.id, texture, owned };
+          return { id: assetId, texture, owned };
         } catch {
           return null;
         }
       }),
     );
-    if (revision !== this.loadRevision) {
+    if (revision !== this.loadRevision || this.disposed) {
       for (const result of results) if (result?.owned) result.texture.destroy(true);
       return;
     }
     for (const sprite of this.sprites.values()) sprite.destroy();
+    this.effects.setTextures(new Map());
+    this.assetTextures.clear();
     for (const texture of this.ownedTextures) texture.destroy(true);
     this.ownedTextures.clear();
     this.sprites.clear();
     for (const result of results) {
       if (!result) continue;
       if (result.owned) this.ownedTextures.add(result.texture);
-      const sprite = new Sprite(result.texture);
-      this.sprites.set(result.id, sprite);
+      for (const stage of stages)
+        if (stage.assetId === result.id) this.sprites.set(stage.id, new Sprite(result.texture));
     }
+    this.assetTextures = new Map(
+      results.flatMap((result) => (result ? [[result.id, result.texture] as const] : [])),
+    );
+    this.effects.setTextures(this.assetTextures);
     this.arrangeSprites();
     this.applyTextureOptimization();
     this.drawHitbox();
     this.setProgress(this.progress);
+    this.onAssets?.({
+      loading: false,
+      loaded: assetIds.filter((_, index) => results[index] !== null),
+      failed: assetIds.filter((_, index) => results[index] === null),
+    });
   }
 
   private transitionFor(index: number): BuildingAnimationTransition | undefined {
-    const from = this.config.stages[index];
-    const to = this.config.stages[index + 1];
+    const stages = this.config.stages.filter(isImageStage);
+    const from = stages[index];
+    const to = stages[index + 1];
     return this.config.transitions.find(
       (transition) => transition.fromStageId === from?.id && transition.toStageId === to?.id,
     );
   }
 
   setProgress(progress: number): void {
+    if (this.disposed) return;
     this.progress = Math.min(1, Math.max(0, Number.isFinite(progress) ? progress : 0));
-    const stages = this.config.stages;
-    if (!stages.length) return;
+    const stages = this.config.stages.filter(isImageStage);
+    this.effects.draw(this.config, this.progress);
+    const applyEffects = () =>
+      this.effects.applyFilters(
+        this.config,
+        this.progress,
+        this.container,
+        (id) => this.sprites.get(id) ?? this.effects.generators.get(id),
+      );
+    if (!stages.length) {
+      applyEffects();
+      return;
+    }
     let activeIndex = 0;
     for (let index = 0; index < stages.length; index++) {
       if (stages[index]!.milestone <= this.progress) activeIndex = index;
@@ -279,10 +277,9 @@ export class BuildingAnimationPlayer {
     const transition = next ? this.transitionFor(activeIndex) : undefined;
     const span = next ? Math.max(0.0001, next.milestone - active.milestone) : 1;
     const local = next ? (this.progress - active.milestone) / span : 1;
-    const amount = ease(Math.min(1, Math.max(0, local)), transition?.easing ?? 'linear');
+    const sampled = transition ? sampleBuildingTransition(transition, local) : undefined;
 
-    this.revealMask.clear();
-    for (const [index, stage] of stages.entries()) {
+    for (const stage of stages) {
       const sprite = this.sprites.get(stage.id);
       if (!sprite) continue;
       const sample = (property: BuildingAnimationTrackProperty) =>
@@ -299,61 +296,111 @@ export class BuildingAnimationPlayer {
       sprite.skew.set(degreesToRadians(sample('skewX')), degreesToRadians(sample('skewY')));
       sprite.pivot.set(sample('pivotX'), sample('pivotY'));
       sprite.visible =
+        animationResourceEnabled(this.config, stage) &&
         this.progress >= stage.inPoint &&
         (this.progress < stage.outPoint || (this.progress === 1 && stage.outPoint === 1));
-      sprite.alpha = sample('opacity') * (index === activeIndex + 1 ? amount : 1);
+      sprite.alpha = sample('opacity');
       sprite.mask = null;
       sprite.filters = null;
       sprite.tint = 0xffffff;
-      sprite.blendMode = 'normal';
+      sprite.blendMode = stage.blendMode ?? 'normal';
     }
+    this.updateOnionSkin();
     const currentSprite = this.sprites.get(active.id);
     const nextSprite = next ? this.sprites.get(next.id) : undefined;
-    if (!transition || !nextSprite) return;
-    if (transition.type === 'crossfade') {
-      if (currentSprite) currentSprite.alpha *= 1 - amount;
+    if (!transition || !sampled || !nextSprite) {
+      applyEffects();
       return;
     }
-    if (transition.type === 'reveal') {
-      const width = this.config.canvas.width * amount;
-      this.revealMask
-        .rect(-this.config.origin.x, -this.config.origin.y, width, this.config.canvas.height)
-        .fill(0xffffff);
-      nextSprite.mask = this.revealMask;
-      return;
-    }
-    const uniforms = this.dissolve.uniforms.uniforms;
-    uniforms.uProgress = amount;
-    uniforms.uNoiseScale = transition.noiseScale;
-    uniforms.uDirectionStrength = transition.directionStrength;
-    uniforms.uDirection = directionIndex[transition.direction];
-    uniforms.uEdgeWidth = transition.edgeWidth;
-    uniforms.uEdgeIntensity = transition.edgeIntensity;
-    uniforms.uEdgeColor = hexRgb(transition.edgeColor);
-    uniforms.uEdgeBlendMode = edgeBlendIndex[transition.blendMode];
-    nextSprite.filters = [this.dissolve.filter];
+    const apply = (sprite: Sprite, pose: TransitionPose, incoming: boolean) => {
+      sprite.alpha *= pose.opacity;
+      if (pose.scaleX !== 1 || pose.scaleY !== 1 || pose.rotation !== 0) {
+        // Compose with animated transforms while keeping the chosen canvas point fixed.
+        const center = {
+          x: this.config.canvas.width * transition.centerX,
+          y: this.config.canvas.height * transition.centerY,
+        };
+        sprite.updateLocalTransform();
+        const before = sprite.localTransform.apply(center);
+        sprite.scale.x *= pose.scaleX;
+        sprite.scale.y *= pose.scaleY;
+        sprite.rotation += degreesToRadians(pose.rotation);
+        sprite.updateLocalTransform();
+        const after = sprite.localTransform.apply(center);
+        sprite.position.x += before.x - after.x;
+        sprite.position.y += before.y - after.y;
+      }
+      sprite.position.x += pose.x * this.config.canvas.width;
+      sprite.position.y += pose.y * this.config.canvas.height;
+      if (!sampled.shader) return;
+      const effect = incoming ? this.incomingTransition : this.outgoingTransition;
+      const uniforms = effect.uniforms.uniforms;
+      uniforms.uEffect = sampled.shader;
+      uniforms.uIncoming = incoming ? 1 : 0;
+      uniforms.uProgress = sampled.amount;
+      uniforms.uNoiseScale = Math.max(1, transition.noiseScale);
+      uniforms.uDirectionStrength = Math.min(1, Math.max(0, transition.directionStrength));
+      uniforms.uDirection = buildingTransitionDirections.findIndex(
+        (entry) => entry.id === transition.direction,
+      );
+      uniforms.uEdgeWidth = transition.edgeWidth;
+      uniforms.uEdgeIntensity = transition.edgeIntensity;
+      uniforms.uEdgeColor = hexRgb(transition.edgeColor);
+      uniforms.uEdgeBlendMode = edgeBlendIndex[transition.blendMode];
+      uniforms.uSoftness = transition.softness;
+      uniforms.uStrength = transition.strength;
+      uniforms.uSegments = transition.segments;
+      uniforms.uAngle = degreesToRadians(transition.angle);
+      uniforms.uCenter = new Float32Array([transition.centerX, transition.centerY]);
+      uniforms.uSeed = transition.seed;
+      uniforms.uReverse = transition.reverse ? 1 : 0;
+      uniforms.uAspect = this.config.canvas.width / this.config.canvas.height;
+      sprite.filters = [effect.filter];
+    };
+    if (currentSprite) apply(currentSprite, sampled.outgoing, false);
+    apply(nextSprite, sampled.incoming, true);
+    applyEffects();
   }
 
   setOnionSkin(stageIndex: number | null): void {
-    if (stageIndex === null) return this.setProgress(this.progress);
-    const sprite = this.sprites.get(this.config.stages[stageIndex]?.id ?? '');
-    if (sprite) {
-      sprite.visible = true;
-      sprite.alpha = 0.18;
-      sprite.tint = 0x85d7e8;
-    }
+    if (this.disposed || stageIndex === this.onionStageIndex) return;
+    this.onionStageIndex = stageIndex;
+    this.updateOnionSkin();
+  }
+
+  private updateOnionSkin(): void {
+    const sprite =
+      this.onionStageIndex === null
+        ? undefined
+        : this.sprites.get(this.config.stages[this.onionStageIndex]?.id ?? '');
+    this.ghost.visible = !!sprite;
+    if (!sprite) return;
+    this.ghost.texture = sprite.texture;
+    this.ghost.position.copyFrom(sprite.position);
+    this.ghost.scale.copyFrom(sprite.scale);
+    this.ghost.skew.copyFrom(sprite.skew);
+    this.ghost.pivot.copyFrom(sprite.pivot);
+    this.ghost.rotation = sprite.rotation;
+    this.ghost.alpha = 0.18;
+    this.ghost.tint = 0x85d7e8;
   }
 
   setHitboxVisible(visible: boolean): void {
+    if (this.disposed) return;
     this.hitbox.visible = visible;
   }
 
   destroy(): void {
+    if (this.disposed) return;
+    this.disposed = true;
     this.loadRevision++;
-    this.dissolve.filter.destroy();
+    this.incomingTransition.filter.destroy();
+    this.outgoingTransition.filter.destroy();
+    this.effects.destroy();
     this.container.destroy({ children: true });
     for (const texture of this.ownedTextures) texture.destroy(true);
     this.ownedTextures.clear();
     this.sprites.clear();
+    this.assetTextures.clear();
   }
 }

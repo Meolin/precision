@@ -116,4 +116,46 @@ describe('TerrainLayer async field queue', () => {
     layer.destroy();
     program.mockRestore();
   });
+
+  it('releases decoded combined textures after replacement and destruction', async () => {
+    const layer = new TerrainLayer(() => new FakeWorker() as unknown as Worker, noTextureLoad);
+    const generated = () =>
+      ({
+        source: { update: vi.fn() },
+        destroy: vi.fn(),
+      }) as unknown as Texture;
+    const first = generated();
+    const second = generated();
+    const decode = vi
+      .spyOn(
+        layer as unknown as { loadCombinedAlbedoTexture: (url: string) => Promise<Texture> },
+        'loadCombinedAlbedoTexture',
+      )
+      .mockResolvedValueOnce(first)
+      .mockResolvedValueOnce(second);
+    const maps = vi
+      .spyOn(layer['materialMapCache'], 'get')
+      .mockResolvedValue({ height: Texture.WHITE, normal: Texture.WHITE });
+    const terrain = new TerrainGrid(2, 2, 1);
+    layer.update(terrain, settings, { rockTextureId: 'stone_1_mixed', orientation: 'mirrored' });
+    await vi.waitFor(() => expect(layer['rockTexture']).toBe(first));
+    layer.update(terrain, settings, { rockTextureId: 'stone_2_mixed', orientation: 'mirrored' });
+    await vi.waitFor(() => expect(first.destroy).toHaveBeenCalledWith(true));
+    const stale = generated();
+    let finishStale: (texture: Texture) => void = () => undefined;
+    decode.mockImplementationOnce(
+      () =>
+        new Promise<Texture>((resolve) => {
+          finishStale = resolve;
+        }),
+    );
+    layer.update(terrain, settings, { rockTextureId: 'stone_3_mixed', orientation: 'mirrored' });
+    layer.update(terrain, settings, { rockTextureId: 'Stone_example', orientation: 'mirrored' });
+    finishStale(stale);
+    await vi.waitFor(() => expect(stale.destroy).toHaveBeenCalledWith(true));
+    layer.destroy();
+    expect(second.destroy).toHaveBeenCalledWith(true);
+    decode.mockRestore();
+    maps.mockRestore();
+  });
 });

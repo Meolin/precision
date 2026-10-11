@@ -4,6 +4,11 @@ import type {
   BuildingAnimationTrack,
   BuildingAnimationTrackProperty,
 } from './BuildingAnimationConfig';
+import {
+  animationEffectParameters,
+  effectParameter,
+  type AnimationEffectProperty,
+} from './BuildingAnimationEffects';
 
 const clamp01 = (value: number) => Math.min(1, Math.max(0, value));
 
@@ -11,6 +16,16 @@ export function defaultTrackValue(
   stage: BuildingAnimationStage,
   property: BuildingAnimationTrackProperty,
 ): number {
+  if (property in animationEffectParameters) {
+    const value = stage[property];
+    if (value !== undefined) return value;
+    const channel = { fxRed: 16, fxGreen: 8, fxBlue: 0 }[
+      property as 'fxRed' | 'fxGreen' | 'fxBlue'
+    ];
+    if (channel !== undefined && stage.color)
+      return (parseInt(stage.color.slice(1), 16) >>> channel) & 255;
+    return effectParameter(stage, property as AnimationEffectProperty).value;
+  }
   switch (property) {
     case 'x':
       return stage.x;

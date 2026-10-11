@@ -2,6 +2,7 @@ import { clamp } from '../math/Vec2';
 import { validateWeaponOverrides } from '../weapons/WeaponSettings';
 import { numericSettings, settingValue, type GameConfig, type NumericSetting } from './GameConfig';
 import { cameraFrame, mapWidthInCameras } from './worldLayout';
+import { cloneRockDensityMask } from '../terrain/RockDensityMask';
 
 export const defaultGameConfig: GameConfig = {
   simulation: { tickRate: 60, maxFrameDeltaMs: 250 },
@@ -39,6 +40,8 @@ export const defaultGameConfig: GameConfig = {
     noiseAmplitudeMeters: 1,
     rockDepthMeters: 6,
     rockVariationMeters: 1.5,
+    rockLayerMask: null,
+    rockDensityMask: null,
   },
   cannon: {
     minAngleDeg: 5,
@@ -64,6 +67,14 @@ export function cloneConfig(config: GameConfig = defaultGameConfig): GameConfig 
       velocityCurve: {
         ...defaultGameConfig.damagePopup.velocityCurve,
         ...config.damagePopup.velocityCurve,
+        control1: {
+          ...defaultGameConfig.damagePopup.velocityCurve.control1,
+          ...config.damagePopup.velocityCurve?.control1,
+        },
+        control2: {
+          ...defaultGameConfig.damagePopup.velocityCurve.control2,
+          ...config.damagePopup.velocityCurve?.control2,
+        },
       },
     },
     weaponOverrides: Object.fromEntries(
@@ -78,7 +89,18 @@ export function cloneConfig(config: GameConfig = defaultGameConfig): GameConfig 
         },
       ]),
     ),
-    terrain: { ...config.terrain },
+    terrain: {
+      ...config.terrain,
+      rockDensityMask: config.terrain.rockDensityMask
+        ? cloneRockDensityMask(config.terrain.rockDensityMask)
+        : null,
+      rockLayerMask: config.terrain.rockLayerMask
+        ? {
+            ...config.terrain.rockLayerMask,
+            offsetsMeters: [...config.terrain.rockLayerMask.offsetsMeters],
+          }
+        : null,
+    },
     cannon: { ...config.cannon },
     preview: { ...config.preview },
   };
@@ -183,6 +205,21 @@ export function validateConfig(input: GameConfig): GameConfig {
   )
     throw new Error('Terrain exceeds the MVP grid budget.');
   if (config.preview.maxPoints < 2) throw new Error('Preview requires at least two points.');
+  const radius = config.cannon.mountHeightMeters;
+  const positions: number[] = [];
+  for (let slot = 0; slot < config.rts.installationsPerPlayer; slot++) {
+    positions.push(
+      config.world.widthMeters * (config.cannon.spawnXFraction + slot * 0.065),
+      config.world.widthMeters * (0.72 + slot * 0.065),
+    );
+  }
+  if (
+    positions.some((x) => x - radius < 0 || x + radius > config.world.widthMeters) ||
+    positions.some((x, index) =>
+      positions.slice(index + 1).some((other) => Math.abs(other - x) < radius * 2),
+    )
+  )
+    throw new Error('World is too narrow for non-overlapping installation spawns.');
   if (
     (config.terrain.rockDepthMeters !== null &&
       (!Number.isFinite(config.terrain.rockDepthMeters) || config.terrain.rockDepthMeters < 0)) ||
@@ -190,5 +227,40 @@ export function validateConfig(input: GameConfig): GameConfig {
     config.terrain.rockVariationMeters < 0
   )
     throw new Error('Rock depth and variation must be finite and non-negative.');
+  const mask = config.terrain.rockLayerMask;
+  if (
+    mask &&
+    (typeof mask.sourceId !== 'string' ||
+      mask.sourceId.length === 0 ||
+      !Number.isFinite(mask.tileWidthMeters) ||
+      mask.tileWidthMeters <= 0 ||
+      !Array.isArray(mask.offsetsMeters) ||
+      mask.offsetsMeters.length < 2 ||
+      mask.offsetsMeters.length > 2048 ||
+      mask.offsetsMeters.some((value) => !Number.isFinite(value)) ||
+      !['mirrored', 'sequential', 'mirror-x', 'random'].includes(mask.orientation))
+  )
+    config.terrain.rockLayerMask = null;
+  const density = config.terrain.rockDensityMask;
+  if (
+    density &&
+    (typeof density.sourceId !== 'string' ||
+      density.sourceId.length === 0 ||
+      !Number.isInteger(density.width) ||
+      density.width < 1 ||
+      density.width > 512 ||
+      !Number.isInteger(density.height) ||
+      density.height < 1 ||
+      density.height > 512 ||
+      !Number.isFinite(density.tileWidthMeters) ||
+      density.tileWidthMeters <= 0 ||
+      !Number.isFinite(density.tileHeightMeters) ||
+      density.tileHeightMeters <= 0 ||
+      !Array.isArray(density.values) ||
+      density.values.length !== density.width * density.height ||
+      density.values.some((value) => !Number.isInteger(value) || value < 0 || value > 255) ||
+      !['mirrored', 'sequential', 'mirror-x', 'random'].includes(density.orientation))
+  )
+    config.terrain.rockDensityMask = null;
   return config;
 }

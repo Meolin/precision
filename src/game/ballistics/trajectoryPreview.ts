@@ -10,6 +10,7 @@ import { applyTerrainDamage } from '../terrain/damageTerrain';
 import { createProjectile } from './Projectile';
 import { advanceProjectile } from './projectilePhysics';
 import type { UnitState } from '../entities/UnitState';
+import type { BodyState } from '../physics/Body';
 
 export interface TrajectoryPreview {
   points: Vec2[];
@@ -25,6 +26,7 @@ export function simulateTrajectoryPreview(
   terrain: TerrainGrid,
   config: GameConfig,
   units: readonly UnitState[] = [],
+  bodies: readonly BodyState[] = [],
 ): TrajectoryPreview {
   if (!cannon.alive) return { points: [], impact: null, flightSeconds: 0 };
   const projectile = createProjectile(cannon, config, -1, 0);
@@ -37,10 +39,26 @@ export function simulateTrajectoryPreview(
   let impact: Vec2 | null = null;
   let previewTerrain = terrain;
   const ricochets: Vec2[] = [];
+  const previewBodies = bodies.map((body) => ({
+    ...body,
+    shape: { ...body.shape },
+    position: { ...body.position },
+    previousPosition: { ...body.position },
+    velocity: { ...body.velocity },
+    previousRotationRad: body.rotationRad,
+  }));
   for (let tick = 1; tick <= maxTicks && projectile.alive; tick++) {
-    const hit = advanceProjectile(projectile, previewTerrain, config, dt, undefined, units);
+    const hit = advanceProjectile(
+      projectile,
+      previewTerrain,
+      config,
+      dt,
+      undefined,
+      units,
+      previewBodies,
+    );
     if (hit) {
-      if (hit.type === 'entity') {
+      if (hit.type === 'entity' || hit.type === 'body') {
         impact = { ...hit.position };
         points.push({ ...hit.position });
         projectile.alive = false;
@@ -68,6 +86,8 @@ export function simulateTrajectoryPreview(
             terrain.cellSizeMeters,
             terrain.cells,
             terrain.chunkSizeCells,
+            terrain.initialSurfaceMeters,
+            terrain.rockDensityMask,
           );
         for (const damage of resolution.terrainDamageEvents)
           applyTerrainDamage(previewTerrain, damage);

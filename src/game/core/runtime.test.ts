@@ -172,6 +172,16 @@ describe('game runtime', () => {
     expect(runtime.getConfig()).toEqual(cloneConfig());
   });
 
+  it('keeps config and state together when a new world cannot spawn', () => {
+    const runtime = new GameRuntime();
+    const before = runtime.getState();
+    const config = cloneConfig(runtime.getConfig());
+    config.world.widthMeters = 21;
+    expect(() => runtime.updateConfig(config)).toThrow('World is too narrow');
+    expect(runtime.getState()).toBe(before);
+    expect(runtime.getConfig().world.widthMeters).toBe(360);
+  });
+
   it('keeps earlier projectile snapshots when settings change', () => {
     const runtime = new GameRuntime();
     runtime.enqueueCommand({ type: 'fire', cannonId: 1 });

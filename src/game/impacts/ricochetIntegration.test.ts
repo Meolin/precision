@@ -26,6 +26,7 @@ function scene(weaponId: WeaponId = 'basicCannon', material: Material = Material
   config.world.heightMeters = 16;
   config.physics = { gravity: 0, windAcceleration: 0, airDrag: 0 };
   const state = createGameState(config, 12345);
+  state.bodies = [];
   state.terrain = new TerrainGrid(200, 80, 0.2);
   for (let y = 20; y < state.terrain.rows; y++)
     for (let x = 0; x < state.terrain.columns; x++) state.terrain.setMaterial(x, y, material);

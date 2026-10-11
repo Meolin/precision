@@ -16,7 +16,8 @@
     "src/game/collision",
     "src/game/combat",
     "src/game/movement",
-    "src/game/effects"
+    "src/game/effects",
+    "src/game/physics"
   ],
   "exclude": ["**/*.test.ts"]
 }

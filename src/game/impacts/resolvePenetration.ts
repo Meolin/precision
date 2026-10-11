@@ -110,7 +110,10 @@ export function resolvePenetration(input: PenetrationInput): PenetrationResult {
     const sampledMaterial = impactMaterial(terrain, midpoint, radiusMeters);
     // Charge the trailing partial step as the last material until the whole circle clears it.
     if (sampledMaterial !== TerrainMaterialId.Air) materialId = sampledMaterial;
-    const resistance = materials[materialId].penetrationResistance / definition.penetrationPower;
+    const resistance =
+      (materials[materialId].penetrationResistance *
+        terrain.getResistanceMultiplier(midpoint, materialId)) /
+      definition.penetrationPower;
     if (!Number.isFinite(resistance) || resistance < 0) return result;
     const availableEnergy = Math.max(0, result.remainingEnergyJ - definition.minimumExitEnergyJ);
     const energyLimited = resistance > 0 && resistance * distance >= availableEnergy;
@@ -254,6 +257,7 @@ export function advanceActivePenetration(
   materials: Readonly<
     Record<TerrainMaterialId, TerrainMaterialDefinition>
   > = terrainMaterialDefinitions,
+  travelLimitMeters = Infinity,
 ): ActivePenetrationStep {
   const from = { ...state.position };
   const speed = Math.sqrt(Math.max(0, (2 * state.energyJ) / massKg));
@@ -287,6 +291,7 @@ export function advanceActivePenetration(
   let remainingDistance = Math.min(
     speed * dt,
     Math.max(0, definition.maxPenetrationDistanceMeters - state.distanceMeters),
+    travelLimitMeters,
   );
   if (remainingDistance <= 1e-9) {
     return {
@@ -323,7 +328,14 @@ export function advanceActivePenetration(
       break;
     }
     state.materialId = materialId;
-    const resistance = materials[materialId].penetrationResistance / definition.penetrationPower;
+    const midpoint = {
+      x: state.position.x + state.direction.x * distance * 0.5,
+      y: state.position.y + state.direction.y * distance * 0.5,
+    };
+    const resistance =
+      (materials[materialId].penetrationResistance *
+        terrain.getResistanceMultiplier(midpoint, materialId)) /
+      definition.penetrationPower;
     const availableEnergy = Math.max(0, state.energyJ - definition.minimumExitEnergyJ);
     const affordableDistance = resistance > 0 ? availableEnergy / resistance : distance;
     const actualDistance = Math.min(distance, affordableDistance);

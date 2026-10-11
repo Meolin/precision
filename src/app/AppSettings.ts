@@ -1,4 +1,6 @@
 import type { GameConfig } from '../game/config/GameConfig';
+import type { RockLayerMask } from '../game/terrain/RockLayerMask';
+import type { RockDensityMask } from '../game/terrain/RockDensityMask';
 import { cloneConfig, defaultGameConfig, validateConfig } from '../game/config/defaultGameConfig';
 import { cameraZoom } from '../game/client/CameraController';
 import { defaultDebugOptions, type DebugOptions } from '../game/rendering/DebugOptions';
@@ -51,36 +53,55 @@ function record(value: unknown): Record<string, unknown> {
 }
 
 function readGameConfig(value: unknown): GameConfig {
-  const input = record(value);
-  const defaults = cloneConfig(defaultGameConfig);
-  const section = <K extends keyof GameConfig>(key: K): GameConfig[K] =>
-    ({
-      ...(defaults[key] as object),
-      ...(record(input[key]) as object),
-    }) as GameConfig[K];
-  const damagePopup = section('damagePopup');
-  damagePopup.velocityCurve = {
-    control1: {
-      ...defaults.damagePopup.velocityCurve.control1,
-      ...record(record(record(input.damagePopup).velocityCurve).control1),
-    },
-    control2: {
-      ...defaults.damagePopup.velocityCurve.control2,
-      ...record(record(record(input.damagePopup).velocityCurve).control2),
-    },
-  };
-  return validateConfig({
-    simulation: section('simulation'),
-    world: section('world'),
-    physics: section('physics'),
-    rts: section('rts'),
-    movement: section('movement'),
-    damagePopup,
-    weaponOverrides: record(input.weaponOverrides),
-    terrain: section('terrain'),
-    cannon: section('cannon'),
-    preview: section('preview'),
-  } as GameConfig);
+  try {
+    const input = record(value);
+    const defaults = cloneConfig(defaultGameConfig);
+    const section = <K extends keyof GameConfig>(key: K): GameConfig[K] =>
+      ({
+        ...(defaults[key] as object),
+        ...(record(input[key]) as object),
+      }) as GameConfig[K];
+    const damagePopup = section('damagePopup');
+    const terrain = section('terrain');
+    const maskInput = record(record(input.terrain).rockLayerMask);
+    const densityInput = record(record(input.terrain).rockDensityMask);
+    terrain.rockDensityMask = Array.isArray(densityInput.values)
+      ? ({ ...densityInput, values: [...densityInput.values] } as unknown as RockDensityMask)
+      : null;
+    terrain.rockLayerMask = Array.isArray(maskInput.offsetsMeters)
+      ? ({
+          sourceId: maskInput.sourceId,
+          tileWidthMeters: maskInput.tileWidthMeters,
+          offsetsMeters: [...maskInput.offsetsMeters],
+          orientation: maskInput.orientation,
+        } as RockLayerMask)
+      : null;
+    damagePopup.velocityCurve = {
+      control1: {
+        ...defaults.damagePopup.velocityCurve.control1,
+        ...record(record(record(input.damagePopup).velocityCurve).control1),
+      },
+      control2: {
+        ...defaults.damagePopup.velocityCurve.control2,
+        ...record(record(record(input.damagePopup).velocityCurve).control2),
+      },
+    };
+    return validateConfig({
+      simulation: section('simulation'),
+      world: section('world'),
+      physics: section('physics'),
+      rts: section('rts'),
+      movement: section('movement'),
+      damagePopup,
+      weaponOverrides: record(input.weaponOverrides),
+      terrain,
+      cannon: section('cannon'),
+      preview: section('preview'),
+    } as GameConfig);
+  } catch {
+    // A malformed saved map must not prevent the local game from starting.
+    return cloneConfig(defaultGameConfig);
+  }
 }
 
 export function normalizeAppSettings(value: unknown): AppSettings {
@@ -166,9 +187,10 @@ export async function loadAppSettings(): Promise<AppSettings> {
 }
 
 export async function saveAppSettings(settings: AppSettings): Promise<void> {
-  await fetch(appSettingsUrl, {
+  const response = await fetch(appSettingsUrl, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(settings, null, 2),
   });
+  if (!response.ok) throw new Error(`Settings save failed (HTTP ${response.status}).`);
 }

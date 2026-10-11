@@ -1,5 +1,6 @@
 import type { GameState } from './GameState';
 import { cloneUnit } from '../entities/UnitState';
+import { cloneRockDensityMask } from '../terrain/RockDensityMask';
 
 /** Explicit, on-demand boundary; never JSON-clone state in the frame loop. */
 export function createGameSnapshot(state: Readonly<GameState>) {
@@ -36,12 +37,22 @@ export function createGameSnapshot(state: Readonly<GameState>) {
           }
         : {}),
     })),
+    bodies: state.bodies.map((body) => ({
+      ...body,
+      shape: { ...body.shape },
+      position: { ...body.position },
+      previousPosition: { ...body.previousPosition },
+      velocity: { ...body.velocity },
+    })),
     terrain: {
       columns: state.terrain.columns,
       rows: state.terrain.rows,
       cellSizeMeters: state.terrain.cellSizeMeters,
       version: state.terrain.version,
       cells: Array.from(state.terrain.cells),
+      ...(state.terrain.rockDensityMask
+        ? { rockDensityMask: cloneRockDensityMask(state.terrain.rockDensityMask) }
+        : {}),
       ...(state.terrain.initialSurfaceMeters
         ? { initialSurfaceMeters: [...state.terrain.initialSurfaceMeters] }
         : {}),

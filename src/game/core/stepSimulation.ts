@@ -25,6 +25,15 @@ import {
   queueTerrainSettling,
   startTerrainFall,
 } from '../terrain/terrainSettling';
+import { stepBodies, wakeBodiesNearTerrainChange } from '../physics/stepBodies';
+import { resolveProjectileBodyImpact } from '../physics/resolveProjectileBodyImpact';
+import { queryProjectileObstacleCollision } from '../collision/queryProjectileCollision';
+import { updateOwnerExclusion } from '../collision/entityCollision';
+import type {
+  BodyCollisionCandidate,
+  EntityCollisionCandidate,
+} from '../collision/ProjectileCollisionResult';
+import type { ProjectileState } from '../ballistics/Projectile';
 
 export function stepSimulation(
   state: GameState,
@@ -39,6 +48,7 @@ export function stepSimulation(
   for (const unit of state.units) refreshUnitGrounding(unit, state.terrain);
   for (const command of commands) executeCommand(state, config, command);
   updateInstallationOrders(state, config);
+  stepBodies(state.bodies, state.terrain, config.physics.gravity, dt);
   for (const projectile of state.projectiles) {
     if (!projectile.alive) continue;
     if (projectile.penetrationState) {
@@ -49,7 +59,14 @@ export function stepSimulation(
         projectile.alive = false;
         continue;
       }
-      const step = advanceActivePenetration(
+      updateOwnerExclusion(projectile, state.units);
+      const before = {
+        ...active,
+        position: { ...active.position },
+        direction: { ...active.direction },
+      };
+      const incomingVelocity = { ...projectile.velocity };
+      let step = advanceActivePenetration(
         active,
         projectile.massKg,
         projectile.radius,
@@ -59,6 +76,34 @@ export function stepSimulation(
       );
       projectile.previousPosition = { ...projectile.position };
       projectile.position = { ...step.to };
+      const obstacle = queryProjectileObstacleCollision(projectile, state.units, state.bodies);
+      if (obstacle) {
+        Object.assign(active, before);
+        if (obstacle.fraction > 1e-9) {
+          step = advanceActivePenetration(
+            active,
+            projectile.massKg,
+            projectile.radius,
+            profile,
+            state.terrain,
+            dt,
+            undefined,
+            step.distanceMeters * obstacle.fraction,
+          );
+        } else {
+          step = {
+            ...step,
+            from: { ...before.position },
+            distanceMeters: 0,
+            energyLostJ: 0,
+            remainingEnergyJ: before.energyJ,
+            remainingVelocity: incomingVelocity,
+            penetrationDistanceMeters: before.distanceMeters,
+          };
+        }
+        active.position = { ...obstacle.position };
+        projectile.position = { ...obstacle.position };
+      }
       projectile.velocity = { ...step.remainingVelocity };
       projectile.lifetimeSeconds += dt;
       let removedCells = 0;
@@ -72,6 +117,12 @@ export function stepSimulation(
             type: 'capsule',
             from: { ...step.from },
             to: { ...step.to },
+            ...(state.terrain.rockDensityMask
+              ? {
+                  minimumRadiusMeters:
+                    projectile.radius + state.terrain.cellSizeMeters * (Math.SQRT1_2 + 0.001),
+                }
+              : {}),
             radiusMeters: penetrationChannelRadius(
               projectile.radius,
               state.terrain.cellSizeMeters,
@@ -102,6 +153,12 @@ export function stepSimulation(
           step.status === 'exited'
             ? Math.hypot(step.remainingVelocity.x, step.remainingVelocity.y)
             : 0;
+        if (obstacle) lastImpact.penetrationStatus = 'stopped';
+      }
+      if (obstacle) {
+        applyObstacleImpact(state, config, projectile, obstacle);
+        projectile.penetrationState = undefined;
+        continue;
       }
       if (step.status === 'continue') {
         projectile.alive =
@@ -121,28 +178,18 @@ export function stepSimulation(
         projectile.position.y <= config.world.heightMeters + projectile.radius;
       continue;
     }
-    const hit = advanceProjectile(projectile, state.terrain, config, dt, samples, state.units);
+    const hit = advanceProjectile(
+      projectile,
+      state.terrain,
+      config,
+      dt,
+      samples,
+      state.units,
+      state.bodies,
+    );
     if (!hit) continue;
-    if (hit.type === 'entity') {
-      const impact = createEntityImpactEvent(projectile, hit, state.tick);
-      const definition = resolveImpactDefinition(
-        projectile.impactDefinitionId,
-        config.weaponOverrides[projectile.weaponId]?.impact,
-        config.weaponOverrides[projectile.weaponId]?.explosion,
-      );
-      const damage = resolveEntityDamage(impact, definition.entityDamage);
-      state.events.push(impact, damage);
-      const health = applyEntityDamage(state.units, damage);
-      if (health) state.lastEntityImpact = { ...impact, ...health, damage: damage.damage };
-      // Direct health changes precede the blast query; already-dead units are skipped.
-      if (definition.explosion)
-        applyExplosion(
-          state,
-          createExplosionEvent(impact, definition.explosion, projectile.ownerEntityId),
-        );
-      projectile.position = { ...hit.position };
-      projectile.velocity = { x: 0, y: 0 };
-      projectile.alive = false;
+    if (hit.type === 'body' || hit.type === 'entity') {
+      applyObstacleImpact(state, config, projectile, hit);
       continue;
     }
     const impact = createImpactEvent(projectile, hit, state.tick);
@@ -234,8 +281,11 @@ export function stepSimulation(
   state.projectiles = state.projectiles.filter((projectile) => projectile.alive);
   const nextElapsedSeconds = state.elapsedSeconds + dt;
   for (const change of state.terrain.getChangesSince(terrainVersionAtStart))
-    if (change.dirtyRect)
+    if (change.dirtyRect) {
       queueTerrainSettling(state.pendingTerrainSettling, change.dirtyRect, nextElapsedSeconds);
+      wakeBodiesNearTerrainChange(state.bodies, change.dirtyRect, state.terrain.cellSizeMeters);
+    }
+  const terrainVersionBeforeSettling = state.terrain.version;
   advanceTerrainFall(state.terrain, state.fallingTerrain, dt);
   for (let index = 0; index < state.pendingTerrainSettling.length;) {
     const pending = state.pendingTerrainSettling[index]!;
@@ -248,6 +298,9 @@ export function stepSimulation(
     );
     state.pendingTerrainSettling.splice(index, 1);
   }
+  for (const change of state.terrain.getChangesSince(terrainVersionBeforeSettling))
+    if (change.dirtyRect)
+      wakeBodiesNearTerrainChange(state.bodies, change.dirtyRect, state.terrain.cellSizeMeters);
   // Craters/channels from this tick also ground stationary targets immediately.
   for (const unit of state.units) refreshUnitGrounding(unit, state.terrain);
   for (const installation of state.units.filter(isInstallation)) {
@@ -258,6 +311,46 @@ export function stepSimulation(
   }
   state.tick++;
   state.elapsedSeconds += dt;
+}
+
+function applyObstacleImpact(
+  state: GameState,
+  config: GameConfig,
+  projectile: ProjectileState,
+  hit: BodyCollisionCandidate | EntityCollisionCandidate,
+): void {
+  const definition = resolveImpactDefinition(
+    projectile.impactDefinitionId,
+    config.weaponOverrides[projectile.weaponId]?.impact,
+    config.weaponOverrides[projectile.weaponId]?.explosion,
+  );
+  if (hit.type === 'body') {
+    const body = state.bodies.find((candidate) => candidate.id === hit.bodyId);
+    if (body) state.events.push(resolveProjectileBodyImpact(projectile, body, hit, state.tick));
+    if (definition.explosion)
+      applyExplosion(
+        state,
+        createExplosionEvent(
+          { tick: state.tick, projectileId: projectile.id, position: hit.position },
+          definition.explosion,
+          projectile.ownerEntityId,
+        ),
+      );
+  } else {
+    const impact = createEntityImpactEvent(projectile, hit, state.tick);
+    const damage = resolveEntityDamage(impact, definition.entityDamage);
+    state.events.push(impact, damage);
+    const health = applyEntityDamage(state.units, damage);
+    if (health) state.lastEntityImpact = { ...impact, ...health, damage: damage.damage };
+    if (definition.explosion)
+      applyExplosion(
+        state,
+        createExplosionEvent(impact, definition.explosion, projectile.ownerEntityId),
+      );
+  }
+  projectile.position = { ...hit.position };
+  projectile.velocity = { x: 0, y: 0 };
+  projectile.alive = false;
 }
 
 /** Health before crater. Subsequent projectiles in this tick see these changes. */

@@ -9,7 +9,10 @@ import type { RtsController } from '../client/RtsController';
 import type { ShaderSettings } from './ShaderSettings';
 import type { TerrainSmoothingSettings } from './TerrainSmoothingSettings';
 import type { TerrainTextureSettings } from './TerrainTextureSettings';
-import type { BuildingAnimationPreview } from '../buildings/BuildingAnimationPreview';
+import type {
+  BuildingAnimationPreview,
+  BuildingAnimationAssetStatus,
+} from '../buildings/BuildingAnimationPreview';
 
 interface Props {
   runtime: GameRuntime;
@@ -23,6 +26,7 @@ interface Props {
   onReset: () => void;
   buildingPreview?: BuildingAnimationPreview;
   allowFireHotkey?: boolean;
+  onBuildingAssets?: (status: BuildingAnimationAssetStatus) => void;
 }
 
 export function GameCanvas({
@@ -37,6 +41,7 @@ export function GameCanvas({
   onReset,
   buildingPreview,
   allowFireHotkey = true,
+  onBuildingAssets,
 }: Props) {
   const surface = useRef<HTMLDivElement>(null);
   const application = useRef<ApplicationRef>(null);
@@ -104,6 +109,7 @@ export function GameCanvas({
           terrainSmoothing={terrainSmoothing}
           terrainTexture={terrainTexture}
           buildingPreview={buildingPreview}
+          onBuildingAssets={onBuildingAssets}
         />
       </Application>
     </div>

@@ -90,6 +90,10 @@ export class MinimapRenderer {
         .circle(point.x, point.y, 2.5)
         .fill(unit.ownerPlayerId === controls.playerId ? 0xd5ec84 : 0xf5af73);
     }
+    for (const body of runtime.getState().bodies) {
+      const point = worldToScreen(body.position, viewport);
+      this.units.circle(point.x, point.y, 1.7).fill(body.color);
+    }
 
     const camera = controls.camera.getViewport(width, height);
     const x = clamp(camera.worldX, 0, world.widthMeters);
