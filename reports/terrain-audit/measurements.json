@@ -1,0 +1,271 @@
+{
+  "node": "v22.22.2",
+  "cpu": "AMD Ryzen 9 8945HX with Radeon Graphics        ",
+  "date": "2026-09-24T14:38:25.024Z",
+  "stages": [
+    {
+      "historicalExplosions": 0,
+      "probeRemoved": 208,
+      "mutation": {
+        "n": 100,
+        "meanMs": 0.005522999999993772,
+        "p95Ms": 0.006600000000048567,
+        "maxMs": 0.143100000000004
+      },
+      "fieldChunk": {
+        "width": 256,
+        "height": 64
+      },
+      "fieldBuild": {
+        "n": 100,
+        "meanMs": 0.995370999999999,
+        "p95Ms": 1.0097999999999274,
+        "maxMs": 1.0141999999999598
+      },
+      "emptySweep100m": {
+        "n": 100,
+        "meanMs": 0.06430979999999972,
+        "p95Ms": 0.06724000000000388,
+        "maxMs": 0.07483999999999469
+      },
+      "emptySweepOccupancyReads": 3918,
+      "surface": {
+        "n": 100,
+        "meanMs": 0.00038011999999996516,
+        "p95Ms": 0.00028400000000033287,
+        "maxMs": 0.006668999999999414
+      },
+      "typedStorageBytes": 648960,
+      "chunkCount": 16
+    },
+    {
+      "historicalExplosions": 10,
+      "probeRemoved": 208,
+      "mutation": {
+        "n": 100,
+        "meanMs": 0.003854999999999791,
+        "p95Ms": 0.0049999999999954525,
+        "maxMs": 0.01599999999996271
+      },
+      "fieldChunk": {
+        "width": 256,
+        "height": 64
+      },
+      "fieldBuild": {
+        "n": 100,
+        "meanMs": 1.0952780000000064,
+        "p95Ms": 1.1141000000000076,
+        "maxMs": 1.2735000000000127
+      },
+      "emptySweep100m": {
+        "n": 100,
+        "meanMs": 0.06590909999999967,
+        "p95Ms": 0.06903000000000929,
+        "maxMs": 0.08174999999999955
+      },
+      "emptySweepOccupancyReads": 3918,
+      "surface": {
+        "n": 100,
+        "meanMs": 0.00023838000000000643,
+        "p95Ms": 0.00023300000000062938,
+        "maxMs": 0.0006970000000001164
+      },
+      "typedStorageBytes": 648960,
+      "chunkCount": 16
+    },
+    {
+      "historicalExplosions": 100,
+      "probeRemoved": 208,
+      "mutation": {
+        "n": 100,
+        "meanMs": 0.004261999999991986,
+        "p95Ms": 0.006099999999833017,
+        "maxMs": 0.021700000000009823
+      },
+      "fieldChunk": {
+        "width": 256,
+        "height": 64
+      },
+      "fieldBuild": {
+        "n": 100,
+        "meanMs": 1.0576059999999938,
+        "p95Ms": 1.0712000000000899,
+        "maxMs": 1.2373000000000047
+      },
+      "emptySweep100m": {
+        "n": 100,
+        "meanMs": 0.06624839999999994,
+        "p95Ms": 0.07098000000000866,
+        "maxMs": 0.10165999999999258
+      },
+      "emptySweepOccupancyReads": 3918,
+      "surface": {
+        "n": 100,
+        "meanMs": 0.0003461699999999613,
+        "p95Ms": 0.0002719999999999345,
+        "maxMs": 0.005873000000001412
+      },
+      "typedStorageBytes": 648960,
+      "chunkCount": 16
+    },
+    {
+      "historicalExplosions": 500,
+      "probeRemoved": 208,
+      "mutation": {
+        "n": 100,
+        "meanMs": 0.002028000000009342,
+        "p95Ms": 0.003500000000030923,
+        "maxMs": 0.011899999999968713
+      },
+      "fieldChunk": {
+        "width": 256,
+        "height": 64
+      },
+      "fieldBuild": {
+        "n": 100,
+        "meanMs": 0.8864839999999891,
+        "p95Ms": 0.9014999999999418,
+        "maxMs": 0.9829999999999472
+      },
+      "emptySweep100m": {
+        "n": 100,
+        "meanMs": 0.06542880000000012,
+        "p95Ms": 0.06883000000000265,
+        "maxMs": 0.10027000000000044
+      },
+      "emptySweepOccupancyReads": 3918,
+      "surface": {
+        "n": 100,
+        "meanMs": 0.0003990800000001171,
+        "p95Ms": 0.00029500000000098225,
+        "maxMs": 0.006919000000000324
+      },
+      "typedStorageBytes": 648960,
+      "chunkCount": 16
+    },
+    {
+      "historicalExplosions": 1000,
+      "probeRemoved": 208,
+      "mutation": {
+        "n": 100,
+        "meanMs": 0.0015340000000060173,
+        "p95Ms": 0.0018999999999778083,
+        "maxMs": 0.0024000000000796717
+      },
+      "fieldChunk": {
+        "width": 256,
+        "height": 64
+      },
+      "fieldBuild": {
+        "n": 100,
+        "meanMs": 0.8052670000000057,
+        "p95Ms": 0.815900000000056,
+        "maxMs": 0.8829999999998108
+      },
+      "emptySweep100m": {
+        "n": 100,
+        "meanMs": 0.06749260000000072,
+        "p95Ms": 0.06965000000000146,
+        "maxMs": 0.23274999999998727
+      },
+      "emptySweepOccupancyReads": 3918,
+      "surface": {
+        "n": 100,
+        "meanMs": 0.00027499000000000235,
+        "p95Ms": 0.0002870000000007167,
+        "maxMs": 0.0007660000000009859
+      },
+      "typedStorageBytes": 648960,
+      "chunkCount": 16
+    }
+  ],
+  "scale": [
+    {
+      "columns": 1800,
+      "rows": 320,
+      "clone": {
+        "n": 30,
+        "meanMs": 1.2012533333333295,
+        "p95Ms": 1.2404999999998836,
+        "maxMs": 1.4134000000001379
+      },
+      "noSurface": {
+        "n": 100,
+        "meanMs": 0.00030178000000005337,
+        "p95Ms": 0.00029999999999972713,
+        "maxMs": 0.0005340000000001055
+      }
+    },
+    {
+      "columns": 2400,
+      "rows": 1280,
+      "clone": {
+        "n": 30,
+        "meanMs": 6.212849999999995,
+        "p95Ms": 6.387599999999793,
+        "maxMs": 6.496000000000095
+      },
+      "noSurface": {
+        "n": 100,
+        "meanMs": 0.0011328600000000265,
+        "p95Ms": 0.001152999999999338,
+        "maxMs": 0.0015150000000016916
+      }
+    },
+    {
+      "columns": 3600,
+      "rows": 1080,
+      "clone": {
+        "n": 30,
+        "meanMs": 7.786623333333364,
+        "p95Ms": 7.947900000000118,
+        "maxMs": 8.037200000000212
+      },
+      "noSurface": {
+        "n": 100,
+        "meanMs": 0.0009606800000000016,
+        "p95Ms": 0.0009880000000021026,
+        "maxMs": 0.0010669999999981883
+      }
+    }
+  ],
+  "fullChunkField": {
+    "n": 100,
+    "meanMs": 4.253764000000019,
+    "p95Ms": 4.293799999999919,
+    "maxMs": 4.764799999999923
+  },
+  "groundEightUnits": {
+    "n": 100,
+    "meanMs": 0.03182399999998779,
+    "p95Ms": 0.032999999999901775,
+    "maxMs": 0.047700000000077125
+  },
+  "solverOneOrder": {
+    "n": 30,
+    "meanMs": 17.776306666666702,
+    "p95Ms": 18.485099999999875,
+    "maxMs": 18.71010000000024
+  },
+  "cornerMiss": {
+    "from": {
+      "x": 0.9,
+      "y": 1.11
+    },
+    "to": {
+      "x": 1.11,
+      "y": 0.9
+    },
+    "analyticCellEntry": {
+      "x": 1,
+      "y": 1.01
+    },
+    "analyticCellExit": {
+      "x": 1.01,
+      "y": 1
+    },
+    "raycast": null,
+    "circleSweep": null,
+    "occluded": false
+  }
+}

@@ -1,0 +1,45 @@
+{
+  "grazingAtDefaultRadius": {
+    "from": {
+      "x": 0.08724718625761432,
+      "y": 0.14324718625761432
+    },
+    "to": {
+      "x": 0.14324718625761432,
+      "y": 0.08724718625761432
+    },
+    "radius": 0.12,
+    "centerContact": true,
+    "sweep": null
+  },
+  "outsideCircle": {
+    "changed": true,
+    "dirtyRect": {
+      "minX": 0,
+      "minY": 1,
+      "maxX": 0,
+      "maxY": 1
+    },
+    "affectedChunks": [
+      {
+        "id": {
+          "column": 0,
+          "row": 0
+        },
+        "dirtyRect": {
+          "minX": 0,
+          "minY": 1,
+          "maxX": 0,
+          "maxY": 1
+        }
+      }
+    ],
+    "modifiedPixels": 1,
+    "version": 1
+  },
+  "sustainedEdits": {
+    "completedRequests": 20,
+    "dispatchedRequests": 21,
+    "publishedChunks": 0
+  }
+}
