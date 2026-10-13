@@ -23,18 +23,21 @@ import {
   type BuildingAnimationConfig,
   type BuildingAnimationStage,
   type BuildingAnimationTransition,
+  type BuildingAnimationTrackProperty,
 } from '../../game/buildings/BuildingAnimationConfig';
 import type { BuildingAnimationPreview } from '../../game/buildings/BuildingAnimationPreview';
 import { isInsideViewport, screenToWorld } from '../../game/rendering/viewport';
 import { KeyframeTimeline } from './KeyframeTimeline';
 import './AnimationSandbox.css';
 import type { AnimationDocument } from './useAnimationDocument';
-import { NumericInput, TextInput } from './EditorInput';
+import { NumericInput, TextInput, type NumericKeyframeControl } from './EditorInput';
 import {
   editAnimationValue,
   sampleAnimationStage,
   renameAnimationAsset,
   renameParticleTexture,
+  animationKeyframeState,
+  insertAnimationKeyframe,
 } from './AnimationEditing';
 import { AnimationTabs } from './AnimationTabs';
 import { AnimationMarkers } from './AnimationMarkers';
@@ -48,6 +51,7 @@ import {
   isImageStage,
   normalizeAnimationLayers,
   removeAnimationLayers,
+  canRemoveAnimationLayers,
   reorderAnimationLayer,
   stageTrackProperties,
   animationFilterCatalog,
@@ -68,8 +72,10 @@ import {
   type AddAnimationEffect,
 } from './AnimationEffectControls';
 import { AnimationOriginOverlay } from './AnimationOriginOverlay';
-import { importAnimationImages } from './AnimationImageImport';
+import { AnimationLayerDeleteButton } from './AnimationLayerDeleteButton';
+import { attachAnimationNormalMap, importAnimationImages } from './AnimationImageImport';
 import { animationLibraryAssetIds } from '../../game/buildings/BuildingAnimationLibrary';
+import { loadAnimationDraft } from './AnimationDraft';
 
 interface Props {
   runtime: GameRuntime;
@@ -185,6 +191,7 @@ export function AnimationSandbox(props: Props) {
   const previewRef = useRef(preview);
   const importRevision = useRef(0);
   const [importing, setImporting] = useState(false);
+  const [fileBusy, setFileBusy] = useState(false);
   const [toolbarHidden, setToolbarHidden] = useState(false);
   const [openSettingsSections, setOpenSettingsSections] = useState<string[]>(['inspector']);
   const [showOrigins, setShowOrigins] = useState(true);
@@ -197,6 +204,8 @@ export function AnimationSandbox(props: Props) {
         : [...current, section],
     );
   const relinkRef = useRef<HTMLInputElement>(null);
+  const normalMapRef = useRef<HTMLInputElement>(null);
+  const normalMapTarget = useRef<{ config: BuildingAnimationConfig; stageId: string } | null>(null);
   const stageList = useRef<HTMLDivElement>(null);
   const effectPalette = useRef<HTMLDivElement>(null);
   previewRef.current = preview;
@@ -293,10 +302,39 @@ export function AnimationSandbox(props: Props) {
   const setConfig = (config: BuildingAnimationConfig, record = true) =>
     onPreview({ ...previewRef.current, config }, record);
   const updateConfig = (update: (config: BuildingAnimationConfig) => void, record = true) => {
-    const config = structuredClone(preview.config);
+    setPlaying(false);
+    const config = structuredClone(previewRef.current.config);
     update(config);
     setConfig(config, record);
   };
+  const insertInspectorKeys = (properties: BuildingAnimationTrackProperty[], value?: number) =>
+    updateConfig((config) => {
+      for (const index of selectedIndices) {
+        const stage = config.stages[index];
+        if (!stage) continue;
+        for (const property of properties)
+          insertAnimationKeyframe(
+            config,
+            stage.id,
+            property,
+            previewRef.current.progress,
+            props.document.snap,
+            value,
+          );
+      }
+    });
+  const inspectorKeyframeState = (properties: BuildingAnimationTrackProperty[]) =>
+    animationKeyframeState(
+      preview.config,
+      selectedIndices.flatMap((index) => preview.config.stages[index]?.id ?? []),
+      properties,
+      preview.progress,
+      props.document.snap,
+    );
+  const keyframeControl = (property: BuildingAnimationTrackProperty): NumericKeyframeControl => ({
+    ...inspectorKeyframeState([property]),
+    onInsert: (value) => insertInspectorKeys([property], value),
+  });
   const updateStage = (patch: Partial<BuildingAnimationStage>) =>
     updateConfig((config) => {
       for (const index of selectedIndices) {
@@ -546,23 +584,31 @@ export function AnimationSandbox(props: Props) {
     });
   };
 
-  const removeSelected = () => {
-    if (selectedIndices.some((index) => preview.config.stages[index]?.locked)) return;
-    const config = structuredClone(preview.config);
-    removeAnimationLayers(
-      config,
-      selectedIndices.map((index) => config.stages[index]!.id),
-    );
-    if (!config.stages.length) return;
+  const removeLayers = (removedIds: string[]) => {
+    if (!canRemoveAnimationLayers(previewRef.current.config, removedIds)) return;
+    const config = structuredClone(previewRef.current.config);
+    const selectedIds = selectedIndices.flatMap((index) => config.stages[index]?.id ?? []);
+    removeAnimationLayers(config, removedIds);
     const firstImage = config.stages.find(isImageStage);
     if (firstImage) firstImage.milestone = 0;
     config.transitions = transitionsFor(config.stages, config.transitions);
     setPlaying(false);
-    const ids = [config.stages[0]!.id];
+    const survivingSelection = selectedIds.filter((id) =>
+      config.stages.some((stage) => stage.id === id),
+    );
+    const ids = survivingSelection.length
+      ? survivingSelection
+      : config.stages[0]
+        ? [config.stages[0].id]
+        : [];
     props.document.session.view(activeAnimationId).selectedLayerIds = ids;
     setLayerSelections((current) => ({ ...current, [activeAnimationId]: ids }));
     setConfig(config);
   };
+  const selectedRemovalIds = selectedIndices.flatMap(
+    (index) => preview.config.stages[index]?.id ?? [],
+  );
+  const removeSelected = () => removeLayers(selectedRemovalIds);
 
   const exportJson = () => {
     if (!validation.valid) return;
@@ -586,6 +632,28 @@ export function AnimationSandbox(props: Props) {
     URL.revokeObjectURL(url);
   };
 
+  const createEntity = async () => {
+    setPlaying(false);
+    setFileBusy(true);
+    try {
+      if (await props.document.createEntity()) {
+        setLayerSelections({});
+        setImportError('');
+      }
+    } finally {
+      setFileBusy(false);
+    }
+  };
+  const saveEntity = async () => {
+    setPlaying(false);
+    setFileBusy(true);
+    try {
+      if (await props.document.saveNow()) exportEntity();
+    } finally {
+      setFileBusy(false);
+    }
+  };
+
   const importJson = async (file?: File) => {
     if (!file || !props.document.ready) return;
     setPlaying(false);
@@ -599,6 +667,9 @@ export function AnimationSandbox(props: Props) {
           ? loadBuildingAnimationLibrary(value)
           : undefined;
       const config = library ? library.animations[0]!.config : loadBuildingAnimationConfig(value);
+      const archived = library
+        ? await loadAnimationDraft(library.entityId).catch(() => undefined)
+        : undefined;
       if (revision !== importRevision.current) return;
       if (previewRef.current.config !== initialConfig) {
         setImportError('Import cancelled because the document changed. Please retry.');
@@ -606,12 +677,16 @@ export function AnimationSandbox(props: Props) {
       }
       const current = previewRef.current;
       const targetId = library?.animations[0]!.id ?? activeAnimationId;
-      const ids = [config.stages[0]!.id];
+      const ids = config.stages[0] ? [config.stages[0].id] : [];
       props.document.session.view(targetId).selectedLayerIds = ids;
       setLayerSelections((current) => ({ ...current, [targetId]: ids }));
       setImportError('');
       if (library) {
-        props.document.editLibrary(library, library.animations[0]!.id);
+        const sourceUrls = { ...current.sourceUrls };
+        for (const [id, blob] of Object.entries(archived?.sources ?? {}))
+          if (animationLibraryAssetIds(library).has(id))
+            sourceUrls[id] = props.document.createSource(blob);
+        props.document.editLibrary(library, library.animations[0]!.id, sourceUrls);
         return;
       }
       const sourceUrls: Record<string, string> = { ...current.sourceUrls };
@@ -660,6 +735,51 @@ export function AnimationSandbox(props: Props) {
     } catch (error) {
       if (revision === importRevision.current)
         setImportError(error instanceof Error ? error.message : 'PNG relink failed.');
+    } finally {
+      if (revision === importRevision.current) setImporting(false);
+    }
+  };
+
+  const chooseNormalMap = (stageId: string) => {
+    normalMapTarget.current = { config: previewRef.current.config, stageId };
+    normalMapRef.current?.click();
+  };
+
+  const importNormalMap = async (file?: File) => {
+    const target = normalMapTarget.current;
+    normalMapTarget.current = null;
+    if (!file || !target || !props.document.ready || importing) return;
+    if (file.type !== 'image/png') {
+      setImportError('Выберите карту нормалей в формате PNG.');
+      return;
+    }
+    setPlaying(false);
+    setImporting(true);
+    const revision = ++importRevision.current;
+    try {
+      const bitmap = await createImageBitmap(file);
+      bitmap.close();
+      if (revision !== importRevision.current) return;
+      const current = previewRef.current;
+      if (current.config !== target.config)
+        throw new Error('Документ изменился. Выберите карту нормалей ещё раз.');
+      const { config, assetId } = attachAnimationNormalMap(
+        current.config,
+        target.stageId,
+        animationLibraryAssetIds(props.document.preview.library),
+      );
+      onPreview({
+        ...current,
+        config,
+        sourceUrls: { ...current.sourceUrls, [assetId]: props.document.createSource(file) },
+        sourceRevision: current.sourceRevision + 1,
+      });
+      setImportError('');
+    } catch (error) {
+      if (revision === importRevision.current)
+        setImportError(
+          error instanceof Error ? error.message : 'Не удалось загрузить карту нормалей.',
+        );
     } finally {
       if (revision === importRevision.current) setImporting(false);
     }
@@ -716,7 +836,7 @@ export function AnimationSandbox(props: Props) {
   return (
     <main
       className="sandbox-workspace"
-      aria-busy={importing || !props.document.ready}
+      aria-busy={fileBusy || importing || !props.document.ready}
       onFocusCapture={(event) => {
         if (
           (event.target as HTMLElement).matches(
@@ -764,15 +884,31 @@ export function AnimationSandbox(props: Props) {
             <summary>Файл</summary>
             <div className="sandbox-topbar-popover document-actions">
               <button
-                disabled={importing || !props.document.ready}
+                type="button"
+                disabled={fileBusy || importing || !props.document.ready}
+                onClick={() => void createEntity()}
+                title="Новая сущность с пустыми слоями · текущая сохраняется локально, Undo возвращает её"
+              >
+                Создать
+              </button>
+              <button
+                type="button"
+                disabled={fileBusy || importing || !props.document.ready || !validation.valid}
+                onClick={() => void saveEntity()}
+                title="Сохранить черновик с ресурсами локально и скачать JSON сущности"
+              >
+                Сохранить
+              </button>
+              <button
+                disabled={fileBusy || importing || !props.document.ready}
                 onClick={() => importRef.current?.click()}
               >
                 Import JSON
               </button>
-              <button disabled={!validation.valid} onClick={exportJson}>
+              <button disabled={fileBusy || !validation.valid} onClick={exportJson}>
                 Export Animation JSON
               </button>
-              <button disabled={!props.document.ready} onClick={exportEntity}>
+              <button disabled={fileBusy || !props.document.ready} onClick={exportEntity}>
                 Export Entity JSON
               </button>
               <small>JSON содержит ссылки на ресурсы. PNG и звук сохраняйте отдельно.</small>
@@ -843,52 +979,133 @@ export function AnimationSandbox(props: Props) {
           </header>
           <div className="stage-order-label">LAYER STACK / TRANSITION</div>
           <div className="stage-list" ref={stageList}>
-            {orderedStageEntries.map(({ stage, index }) => (
-              <button
-                className={`stage-card ${selectedIndices.includes(index) ? 'is-selected' : ''} ${stage.kind === 'filter' ? 'is-dependent' : ''} ${stage.id === selectedStage?.parentId || stage.parentId === selectedId ? 'is-related' : ''}`}
+            {!preview.config.stages.length ? (
+              <p className="empty-layers-hint">
+                Слоёв пока нет. Добавьте PNG или процедурный эффект.
+              </p>
+            ) : null}
+            {orderedStageEntries.map(({ stage, index }, position) => (
+              <div
+                className={[
+                  'stage-card',
+                  selectedIndices.includes(index) && 'is-selected',
+                  stage.kind === 'filter' && 'is-dependent',
+                  stage.kind !== 'filter' &&
+                    orderedStageEntries[position + 1]?.stage.parentId === stage.id &&
+                    'is-effect-owner',
+                  stage.kind === 'filter' &&
+                    orderedStageEntries[position + 1]?.stage.parentId !== stage.parentId &&
+                    'is-last-dependent',
+                  (stage.id === selectedStage?.parentId || stage.parentId === selectedId) &&
+                    'is-related',
+                ]
+                  .filter(Boolean)
+                  .join(' ')}
                 key={stage.id}
                 data-stage-id={stage.id}
-                aria-pressed={selectedIndices.includes(index)}
-                onClick={(event) => selectStage(event, index)}
               >
-                <span className="stage-select-mark">
-                  {selectedIndices.includes(index) ? '✓' : ''}
-                </span>
-                <span className="stage-grip">⋮⋮</span>
-                <span className="stage-thumb">
-                  {isImageStage(stage) ? (
-                    <img
-                      src={preview.sourceUrls[stage.assetId] ?? stage.assetId}
-                      alt=""
-                      onError={(event) => {
-                        event.currentTarget.style.visibility = 'hidden';
-                      }}
-                      onLoad={(event) => {
-                        event.currentTarget.style.visibility = 'visible';
-                      }}
-                    />
-                  ) : (
-                    <b>{stage.kind === 'filter' ? 'ƒx' : stage.kind === 'particles' ? '✦' : '☀'}</b>
-                  )}
-                </span>
-                <span className="stage-card-copy">
-                  <strong>{stage.name}</strong>
-                  <small>
-                    {props.document.assets.failed.includes(stage.assetId) ||
-                    (stage.particleTextureId &&
-                      props.document.assets.failed.includes(stage.particleTextureId)) ? (
-                      <span className="missing-asset-badge">PNG отсутствует · </span>
-                    ) : null}
-                    {stage.kind === 'filter'
-                      ? `↳ ${preview.config.stages.find((parent) => parent.id === stage.parentId)?.name}`
-                      : isImageStage(stage)
-                        ? `${(stage.milestone * preview.config.timeline.durationSeconds).toFixed(2)} s · ${stage.assetId}`
-                        : `${stage.kind} · procedural`}
-                  </small>
-                </span>
-              </button>
+                <button
+                  type="button"
+                  className="stage-card-select"
+                  aria-pressed={selectedIndices.includes(index)}
+                  onClick={(event) => selectStage(event, index)}
+                >
+                  <span className="stage-select-mark">
+                    {selectedIndices.includes(index) ? '✓' : ''}
+                  </span>
+                  <span className="stage-grip">⋮⋮</span>
+                  <span className="stage-thumb">
+                    {isImageStage(stage) ? (
+                      <img
+                        src={preview.sourceUrls[stage.assetId] ?? stage.assetId}
+                        alt=""
+                        onError={(event) => {
+                          event.currentTarget.style.visibility = 'hidden';
+                        }}
+                        onLoad={(event) => {
+                          event.currentTarget.style.visibility = 'visible';
+                        }}
+                      />
+                    ) : (
+                      <b>
+                        {stage.kind === 'filter' ? 'ƒx' : stage.kind === 'particles' ? '✦' : '☀'}
+                      </b>
+                    )}
+                  </span>
+                  <span className="stage-card-copy">
+                    <strong>{stage.name}</strong>
+                    <small>
+                      {props.document.assets.failed.includes(stage.assetId) ||
+                      (stage.particleTextureId &&
+                        props.document.assets.failed.includes(stage.particleTextureId)) ? (
+                        <span className="missing-asset-badge">PNG отсутствует · </span>
+                      ) : null}
+                      {stage.kind === 'filter'
+                        ? `↳ ${preview.config.stages.find((parent) => parent.id === stage.parentId)?.name}`
+                        : isImageStage(stage)
+                          ? `${(stage.milestone * preview.config.timeline.durationSeconds).toFixed(2)} s · ${stage.assetId}`
+                          : `${stage.kind} · procedural`}
+                    </small>
+                  </span>
+                </button>
+                {isImageStage(stage) ? (
+                  <button
+                    type="button"
+                    className={`animation-layer-normal ${stage.normalMapAssetId ? 'has-normal-map' : ''}`}
+                    aria-label={`${stage.normalMapAssetId ? 'Заменить' : 'Загрузить'} карту нормалей слоя ${stage.name}`}
+                    aria-pressed={!!stage.normalMapAssetId}
+                    title={
+                      stage.normalMapAssetId
+                        ? `${props.document.assets.failed.includes(stage.normalMapAssetId) ? 'Карта нормалей отсутствует' : 'Карта нормалей подключена'}: ${stage.normalMapAssetId} · Нажмите для замены`
+                        : 'Загрузить карту нормалей PNG'
+                    }
+                    disabled={importing || !props.document.ready || stage.locked}
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      chooseNormalMap(stage.id);
+                    }}
+                  >
+                    <svg
+                      width="16"
+                      height="16"
+                      viewBox="0 0 24 24"
+                      aria-hidden="true"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.7"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <path d="M4 16l8 5 8-5-8-5-8 5ZM12 15V3m-3 3 3-3 3 3" />
+                    </svg>
+                  </button>
+                ) : null}
+                <AnimationLayerDeleteButton
+                  name={stage.name}
+                  disabled={
+                    importing ||
+                    !props.document.ready ||
+                    !canRemoveAnimationLayers(preview.config, [stage.id])
+                  }
+                  onDelete={() => removeLayers([stage.id])}
+                />
+              </div>
             ))}
           </div>
+
+          <input
+            ref={normalMapRef}
+            type="file"
+            className="hidden-input"
+            accept="image/png"
+            aria-label="Файл карты нормалей"
+            disabled={importing || !props.document.ready}
+            onChange={(event) => {
+              void importNormalMap(event.target.files?.[0]);
+              event.target.value = '';
+            }}
+          />
 
           <label
             className="png-drop"
@@ -1004,13 +1221,9 @@ export function AnimationSandbox(props: Props) {
             <button
               onClick={removeSelected}
               disabled={
-                !preview.config.stages.some(
-                  (stage, index) =>
-                    !selectedIndices.includes(index) &&
-                    !selectedIndices.some(
-                      (selected) => preview.config.stages[selected]?.id === stage.parentId,
-                    ),
-                )
+                importing ||
+                !props.document.ready ||
+                !canRemoveAnimationLayers(preview.config, selectedRemovalIds)
               }
             >
               Удалить слои и их эффекты
@@ -1387,14 +1600,54 @@ export function AnimationSandbox(props: Props) {
                         />
                       </label>
                       {isImageStage(selectedStage) ? (
-                        <label>
-                          ASSET ID
-                          <TextInput
-                            value={selectedStage.assetId}
-                            disabled={isMultiSelection}
-                            onCommit={renameAssetId}
-                          />
-                        </label>
+                        <>
+                          <label>
+                            ASSET ID
+                            <TextInput
+                              value={selectedStage.assetId}
+                              disabled={isMultiSelection}
+                              onCommit={renameAssetId}
+                            />
+                          </label>
+                          {!isMultiSelection ? (
+                            <div className="normal-map-controls">
+                              <small>
+                                NORMAL MAP · {selectedStage.normalMapAssetId ?? 'не подключена'}
+                                {selectedStage.normalMapAssetId &&
+                                props.document.assets.failed.includes(
+                                  selectedStage.normalMapAssetId,
+                                )
+                                  ? ' · PNG отсутствует'
+                                  : ''}
+                              </small>
+                              <button
+                                type="button"
+                                disabled={importing || !props.document.ready}
+                                onClick={() => chooseNormalMap(selectedStage.id)}
+                              >
+                                {selectedStage.normalMapAssetId
+                                  ? 'Заменить карту нормалей'
+                                  : 'Загрузить карту нормалей'}
+                              </button>
+                              {selectedStage.normalMapAssetId ? (
+                                <button
+                                  type="button"
+                                  disabled={importing || !props.document.ready}
+                                  onClick={() =>
+                                    updateConfig((config) => {
+                                      const stage = config.stages.find(
+                                        (item) => item.id === selectedStage.id,
+                                      );
+                                      if (stage && !stage.locked) delete stage.normalMapAssetId;
+                                    })
+                                  }
+                                >
+                                  Удалить карту нормалей
+                                </button>
+                              ) : null}
+                            </div>
+                          ) : null}
+                        </>
                       ) : null}
                       <div className="field-grid two">
                         {selectedStage.kind !== 'filter' ||
@@ -1405,6 +1658,8 @@ export function AnimationSandbox(props: Props) {
                             second={selectedStage.y}
                             onFirst={(x) => updateStage({ x })}
                             onSecond={(y) => updateStage({ y })}
+                            firstKeyframe={keyframeControl('x')}
+                            secondKeyframe={keyframeControl('y')}
                           />
                         ) : null}
                         {selectedStage.kind !== 'filter' ? (
@@ -1417,13 +1672,17 @@ export function AnimationSandbox(props: Props) {
                               step={0.01}
                               onFirst={(scaleX) => updateStage({ scaleX })}
                               onSecond={(scaleY) => updateStage({ scaleY })}
+                              firstKeyframe={keyframeControl('scaleX')}
+                              secondKeyframe={keyframeControl('scaleY')}
                             />
                             <label>
                               ROTATION · °
                               <NumericInput
+                                label="ROTATION · °"
                                 step={0.01}
                                 value={selectedStage.rotation}
                                 onCommit={(value) => updateStage({ rotation: value })}
+                                keyframe={keyframeControl('rotation')}
                               />
                             </label>
                           </>
@@ -1431,11 +1690,13 @@ export function AnimationSandbox(props: Props) {
                         <label>
                           {selectedStage.kind === 'filter' ? 'MIX' : 'OPACITY'}
                           <NumericInput
+                            label={selectedStage.kind === 'filter' ? 'MIX' : 'OPACITY'}
                             min={0}
                             max={1}
                             step={0.01}
                             value={selectedStage.opacity}
                             onCommit={(value) => updateStage({ opacity: value })}
+                            keyframe={keyframeControl('opacity')}
                           />
                         </label>
                         {isImageStage(selectedStage) ? (
@@ -1475,6 +1736,11 @@ export function AnimationSandbox(props: Props) {
                             else updateStage(patch);
                           }}
                           onTexture={importParticleTexture}
+                          keyframeControl={keyframeControl}
+                          colorKeyframe={{
+                            ...inspectorKeyframeState(['fxRed', 'fxGreen', 'fxBlue']),
+                            onInsert: () => insertInspectorKeys(['fxRed', 'fxGreen', 'fxBlue']),
+                          }}
                         />
                       ) : null}
                       {selectedStage.kind !== 'filter' ? (
@@ -1489,6 +1755,8 @@ export function AnimationSandbox(props: Props) {
                               step={0.01}
                               onFirst={(skewX) => updateStage({ skewX })}
                               onSecond={(skewY) => updateStage({ skewY })}
+                              firstKeyframe={keyframeControl('skewX')}
+                              secondKeyframe={keyframeControl('skewY')}
                             />
                             <PairedNumberField
                               label="PIVOT X, Y · px"
@@ -1497,6 +1765,8 @@ export function AnimationSandbox(props: Props) {
                               step={0.01}
                               onFirst={(pivotX) => updateStage({ pivotX })}
                               onSecond={(pivotY) => updateStage({ pivotY })}
+                              firstKeyframe={keyframeControl('pivotX')}
+                              secondKeyframe={keyframeControl('pivotY')}
                             />
                           </div>
                         </details>
@@ -1918,6 +2188,7 @@ export function AnimationSandbox(props: Props) {
                   onPreview({ ...preview, progress, visible: true });
                 }}
                 onSelectStage={(index) => setSelectedIndices([index])}
+                onRemoveLayer={(id) => removeLayers([id])}
                 onPlaying={setPlaying}
                 onLoop={setLoop}
                 onSpeed={setSpeed}
@@ -2004,6 +2275,8 @@ function PairedNumberField({
   onSecond,
   min,
   step,
+  firstKeyframe,
+  secondKeyframe,
 }: {
   label: string;
   first: number;
@@ -2012,6 +2285,8 @@ function PairedNumberField({
   onSecond: (value: number) => void;
   min?: number;
   step?: number;
+  firstKeyframe?: NumericKeyframeControl;
+  secondKeyframe?: NumericKeyframeControl;
 }) {
   return (
     <div className="paired-number-field">
@@ -2023,6 +2298,7 @@ function PairedNumberField({
           min={min}
           step={step}
           onCommit={(value) => onFirst(value)}
+          keyframe={firstKeyframe}
         />
         <span aria-hidden="true">,</span>
         <NumericInput
@@ -2031,6 +2307,7 @@ function PairedNumberField({
           min={min}
           step={step}
           onCommit={(value) => onSecond(value)}
+          keyframe={secondKeyframe}
         />
       </div>
     </div>

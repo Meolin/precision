@@ -32,7 +32,21 @@ export function createAnimationVariant(
   if (kind === 'custom' || kind === 'construction') return config;
   const sourceStage =
     config.stages.filter(isImageStage).at(-1) ??
-    config.stages.find((stage) => stage.kind !== 'filter')!;
+    config.stages.find((stage) => stage.kind !== 'filter');
+  if (!sourceStage) {
+    config.stages = [];
+    config.transitions = [];
+    config.tracks = [];
+    config.sounds = [];
+    config.markers = [];
+    config.timeline = {
+      ...config.timeline,
+      durationSeconds: kind === 'idle' ? 2 : 1,
+      workAreaStart: 0,
+      workAreaEnd: 1,
+    };
+    return config;
+  }
   const stage = { ...sourceStage, milestone: 0, inPoint: 0, outPoint: 1, layerOrder: 0 };
   config.stages = [
     stage,
@@ -119,19 +133,23 @@ export function replaceLibraryAnimation(
   };
 }
 
+export function createEmptyBuildingAnimationLibrary(entityId: string): BuildingAnimationLibrary {
+  const config = createDefaultBuildingAnimationConfig();
+  config.id = `${entityId}-construction`;
+  config.stages = [];
+  config.transitions = [];
+  config.tracks = [];
+  config.sounds = [];
+  config.markers = [];
+  config.effectPresets = [];
+  return createBuildingAnimationLibrary(config);
+}
+
 export function animationLibraryAssetIds(library: BuildingAnimationLibrary): Set<string> {
   return new Set(
     library.animations.flatMap(({ config }) => [
       ...animationTextureAssets(config),
-      ...(config.effectPresets ?? []).flatMap((preset) =>
-        preset.stages.flatMap((stage) =>
-          isImageStage(stage)
-            ? [stage.assetId]
-            : stage.particleTextureId
-              ? [stage.particleTextureId]
-              : [],
-        ),
-      ),
+      ...(config.effectPresets ?? []).flatMap((preset) => animationTextureAssets(preset)),
       ...config.sounds.map((sound) => sound.assetId),
     ]),
   );

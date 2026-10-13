@@ -13,6 +13,7 @@ import { loadAnimationDraft, saveAnimationDraft } from './AnimationDraft';
 import {
   animationLibraryAssetIds,
   createBuildingAnimationLibrary,
+  createEmptyBuildingAnimationLibrary,
   replaceLibraryAnimation,
   type BuildingAnimationLibrary,
 } from '../../game/buildings/BuildingAnimationLibrary';
@@ -163,6 +164,71 @@ export function useAnimationDocument() {
     sources.current.set(url, blob);
     return url;
   }, []);
+
+  const saveNow = useCallback(async () => {
+    if (!ready) return false;
+    const value = current.current,
+      revision = editRevision.current;
+    const storedSources = Object.fromEntries(
+      Object.entries(value.sourceUrls).flatMap(([id, url]) => {
+        const blob = sources.current.get(url);
+        return blob ? [[id, blob]] : [];
+      }),
+    );
+    setDraftStatus('Saving draft…');
+    saveQueue.current = saveQueue.current
+      .catch(() => undefined)
+      .then(() =>
+        saveAnimationDraft({
+          config: value.config,
+          library: value.library,
+          activeAnimationId: value.activeAnimationId,
+          sources: storedSources,
+          position: value.position,
+        }),
+      );
+    try {
+      await saveQueue.current;
+      if (revision === editRevision.current) setDraftStatus('Draft saved locally');
+      setError('');
+      return true;
+    } catch (reason) {
+      setError(
+        `Не удалось сохранить: ${reason instanceof Error ? reason.message : String(reason)}`,
+      );
+      if (revision === editRevision.current) setDraftStatus('Draft not saved: local storage error');
+      return false;
+    }
+  }, [ready]);
+
+  const createEntity = useCallback(async () => {
+    const previous = current.current;
+    if (!(await saveNow())) return false;
+    if (current.current !== previous) {
+      setError('Документ изменился во время сохранения. Повторите создание.');
+      return false;
+    }
+    const library = createEmptyBuildingAnimationLibrary(`entity-${crypto.randomUUID()}`);
+    history.remember(previous);
+    setPlaying(false);
+    editRevision.current++;
+    setDraftStatus('Unsaved changes');
+    setAssets({ loading: false, loaded: [], failed: [] });
+    apply({
+      ...previous,
+      library,
+      activeAnimationId: 'construction',
+      config: library.animations[0]!.config,
+      sourceUrls: {},
+      sourceRevision: previous.sourceRevision + 1,
+      progress: 0,
+      visible: true,
+      position: null,
+      onionSkinStageIndex: null,
+    });
+    setHistoryVersion((value) => value + 1);
+    return true;
+  }, [apply, history, saveNow, setPlaying]);
 
   useEffect(() => {
     let cancelled = false;
@@ -373,6 +439,8 @@ export function useAnimationDocument() {
     canUndo: history.undo.length > 0,
     canRedo: history.redo.length > 0,
     createSource,
+    createEntity,
+    saveNow,
     editLibrary,
     selectAnimation,
     audioError: audio.error,

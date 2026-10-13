@@ -2,6 +2,53 @@ import { describe, expect, it, vi } from 'vitest';
 import { createDefaultAppSettings, normalizeAppSettings, saveAppSettings } from './AppSettings';
 
 describe('app settings persistence', () => {
+  it('restores normal glow controls and supplies defaults to older settings files', () => {
+    const saved = createDefaultAppSettings();
+    saved.shaders.effects.normalGlow = {
+      enabled: false,
+      values: {
+        strength: 2.1,
+        radius: 12,
+        threshold: 1.2,
+        softness: 0,
+        visualOpacity: 0.3,
+        color: 0x80ffcc,
+      },
+    };
+    expect(
+      normalizeAppSettings(JSON.parse(JSON.stringify(saved))).shaders.effects.normalGlow,
+    ).toEqual(saved.shaders.effects.normalGlow);
+    const legacyEffects: Partial<typeof saved.shaders.effects> = { ...saved.shaders.effects };
+    delete legacyEffects.normalGlow;
+    const legacy = normalizeAppSettings({
+      ...saved,
+      shaders: { ...saved.shaders, effects: legacyEffects },
+    });
+    expect(legacy.shaders.effects.normalGlow).toEqual(
+      createDefaultAppSettings().shaders.effects.normalGlow,
+    );
+  });
+
+  it('restores visual opacity independently and keeps old files visually unchanged', () => {
+    const saved = createDefaultAppSettings();
+    for (const id of ['glow', 'bloom', 'lightmap'] as const)
+      saved.shaders.effects[id].values.visualOpacity = 0;
+    const restored = normalizeAppSettings(JSON.parse(JSON.stringify(saved)));
+    for (const id of ['glow', 'bloom', 'lightmap'] as const) {
+      expect(restored.shaders.effects[id].values.visualOpacity).toBe(0);
+      delete saved.shaders.effects[id].values.visualOpacity;
+    }
+    expect(restored.shaders.effects.glow.values.strength).toBe(
+      saved.shaders.effects.glow.values.strength,
+    );
+    expect(restored.shaders.effects.lightmap.values.flash).toBe(
+      saved.shaders.effects.lightmap.values.flash,
+    );
+    const legacy = normalizeAppSettings(JSON.parse(JSON.stringify(saved)));
+    for (const id of ['glow', 'bloom', 'lightmap'] as const)
+      expect(legacy.shaders.effects[id].values.visualOpacity).toBe(1);
+  });
+
   it('restores every right-panel settings owner', () => {
     const saved = createDefaultAppSettings();
     saved.gameConfig.physics.gravity = 4.2;

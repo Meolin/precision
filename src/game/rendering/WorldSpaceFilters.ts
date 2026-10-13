@@ -2,7 +2,7 @@ import { defaultFilterVert, Filter, GlProgram, Matrix, type Sprite, type Texture
 import { ShockwaveFilter } from 'pixi-filters';
 import type { Vec2 } from '../math/Vec2';
 
-/** Simple ambient + light-map shading, sampled in world space after camera clipping. */
+/** Ambient depth shading only; point lights use normals in TerrainChunkMesh. */
 export class WorldLightmapFilter extends Filter {
   private mapMatrix = new Matrix();
 

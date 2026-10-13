@@ -29,6 +29,7 @@ interface Layers {
   background: Graphics;
   terrain: Container;
   cannonBases: Container;
+  buildings: Container;
 }
 
 /** Owns GPU resources and transient visuals; all simulation inputs are read-only. */
@@ -120,10 +121,10 @@ export class ScenePostProcessing {
       this.shadow.offset = { x: value('shadow', 'offsetX'), y: value('shadow', 'offsetY') };
       this.outline.thickness = value('outline', 'thickness');
       this.outline.color = value('outline', 'color');
-      this.glow.outerStrength = value('glow', 'strength');
+      this.glow.outerStrength = value('glow', 'strength') * value('glow', 'visualOpacity');
       this.glow.color = value('glow', 'color');
       this.bloom.threshold = value('bloom', 'threshold');
-      this.bloom.bloomScale = value('bloom', 'strength');
+      this.bloom.bloomScale = value('bloom', 'strength') * value('bloom', 'visualOpacity');
       this.bloom.blur = value('bloom', 'blur');
       this.heat.scale.set(value('heat', 'strength'));
       const inspectingMaterial = value('terrainLighting', 'display') !== 0;
@@ -138,6 +139,7 @@ export class ScenePostProcessing {
       );
       this.assign(this.layers.background, enabled('blur') ? [this.blur] : []);
       this.assign(this.layers.cannonBases, enabled('shadow') ? [this.shadow] : []);
+      this.assign(this.layers.buildings, enabled('shadow') ? [this.shadow] : []);
       this.assign(this.combat, [
         ...(enabled('glow') ? [this.glow] : []),
         ...(enabled('bloom') ? [this.bloom] : []),
@@ -216,7 +218,7 @@ export class ScenePostProcessing {
       visual.graphic
         .clear()
         .circle(0, 0, radius + 3 / ppm)
-        .fill({ color: 0xf5af73, alpha: 0.14 });
+        .fill({ color: 0xf5af73, alpha: 0.14 * value('glow', 'visualOpacity') });
       visual.graphic.circle(0, 0, radius).fill(0xffdfac);
       if (enabled('motion')) {
         visual.motion ??= new MotionBlurFilter({ kernelSize: 7 });
@@ -239,7 +241,7 @@ export class ScenePostProcessing {
         if (age > 0.55) continue;
         const explosion = item.event.resolution.explosion;
         const radius = Math.max(0.5, Math.min(5, explosion.radiusMeters * 0.3)) * (0.35 + age * 2);
-        const fade = (1 - age / 0.55) ** 2;
+        const fade = (1 - age / 0.55) ** 2 * value('lightmap', 'visualOpacity');
         this.flashes
           .circle(explosion.position.x, explosion.position.y, radius)
           .fill({ color: 0xffad55, alpha: fade * 0.55 });
@@ -269,6 +271,7 @@ export class ScenePostProcessing {
     this.layers.terrain.filters = null;
     this.layers.background.filters = null;
     this.layers.cannonBases.filters = null;
+    this.layers.buildings.filters = null;
     for (const sprite of this.layers.cannonBases.children) sprite.filters = null;
     this.combat.filters = null;
     for (const filter of [

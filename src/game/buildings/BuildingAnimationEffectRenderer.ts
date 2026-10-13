@@ -233,7 +233,8 @@ export class BuildingAnimationEffectRenderer {
         composition ? 0 : (value('skewY') * Math.PI) / 180,
       );
       node.pivot.set(composition ? 0 : value('pivotX'), composition ? 0 : value('pivotY'));
-      node.alpha = value('opacity');
+      // Visual transparency must not change the sampled light emitted into terrain.
+      node.alpha = value('opacity') * Math.min(1, Math.max(0, value('fxVisualOpacity')));
       node.blendMode = stage.blendMode ?? (stage.particlePreset === 'smoke' ? 'normal' : 'add');
       let used = 0;
       if (stage.kind === 'particles') {
@@ -311,7 +312,14 @@ export class BuildingAnimationEffectRenderer {
       const sample = animationStageSampler(config, stage),
         value = (property: Parameters<typeof sample>[0]) => sample(property, progress),
         uniforms = filter.values.uniforms;
-      if (value('opacity') <= 0 || (stage.filterType !== 'color' && value('fxStrength') === 0))
+      const mix = value('opacity');
+      const visualOpacity =
+        stage.filterType === 'glow' ? Math.min(1, Math.max(0, value('fxVisualOpacity'))) : 1;
+      if (
+        mix <= 0 ||
+        visualOpacity <= 0 ||
+        (stage.filterType !== 'color' && value('fxStrength') === 0)
+      )
         continue;
       const matrix =
         stage.coordinateSpace === 'local'
@@ -332,7 +340,8 @@ export class BuildingAnimationEffectRenderer {
       const point = effectOrigin(config, stage, progress),
         screen = container.toGlobal({ x: point.x - config.origin.x, y: point.y - config.origin.y });
       filter.origin.position.set(screen.x, screen.y);
-      uniforms.uMix = value('opacity');
+      uniforms.uMix = mix;
+      uniforms.uVisualOpacity = visualOpacity;
       uniforms.uTime = Math.max(
         0,
         (progress - (stage.emissionStart ?? stage.inPoint)) * config.timeline.durationSeconds,
@@ -361,6 +370,17 @@ export class BuildingAnimationEffectRenderer {
           : Math.abs(strength)) * pixelScale,
       );
       target.filters = [...(target.filters ?? []), filter];
+    }
+    // Intermediate passes render into a clear texture. Only the final pass composites
+    // into the scene and must retain the resource's Add/Screen/etc. blend mode.
+    for (const stage of config.stages) {
+      if (stage.kind === 'filter') continue;
+      const target = targetFor(stage.id);
+      const filters = target?.filters;
+      if (!target || !filters) continue;
+      filters.forEach((filter, index) => {
+        filter.blendMode = index === filters.length - 1 ? target.blendMode : 'normal';
+      });
     }
   }
   destroy(): void {

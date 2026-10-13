@@ -8,6 +8,7 @@ export type ShaderId =
   | 'shadow'
   | 'outline'
   | 'glow'
+  | 'normalGlow'
   | 'bloom'
   | 'shockwave'
   | 'heat'
@@ -57,7 +58,7 @@ export const shaderDefinitions: readonly ShaderDefinition[] = [
     title: 'Динамический свет камня',
     enabled: true,
     description:
-      'Источник следует за курсором. Карты высот и нормалей создаются один раз для выбранной текстуры.',
+      'Свет под курсором. Все источники используют нормали текстуры и контура; выраженность нормалей общая.',
     controls: [
       number('intensity', 'Интенсивность', 0, 3, 0.05, 1.2),
       number('radius', 'Радиус', 2, 80, 1, 24, 'm'),
@@ -85,11 +86,12 @@ export const shaderDefinitions: readonly ShaderDefinition[] = [
     title: 'Освещение рельефа',
     enabled: true,
     description:
-      'Затемнение в глубине грунта и свет от взрывов. Карта обновляется после разрушений.',
+      'Затемнение в глубине грунта и свет от взрывов с учётом нормалей. Карта глубины обновляется после разрушений.',
     controls: [
       number('ambient', 'Общий свет', 0.1, 1, 0.05, 0.65),
       number('depth', 'Глубина затемнения', 1, 30, 1, 12, 'm'),
       number('flash', 'Свет от взрывов', 0, 2, 0.1, 0.8),
+      number('visualOpacity', 'Непрозрачность вспышек', 0, 1, 0.05, 1),
       number('radius', 'Радиус света', 2, 25, 1, 10, 'm'),
     ],
   },
@@ -134,7 +136,23 @@ export const shaderDefinitions: readonly ShaderDefinition[] = [
     description: 'Цветной ореол снарядов и вспышек.',
     controls: [
       number('strength', 'Сила свечения', 0, 4, 0.1, 0.8),
+      number('visualOpacity', 'Непрозрачность ореола', 0, 1, 0.05, 1),
       color('color', 'Цвет свечения', 0xffb866),
+    ],
+  },
+  {
+    id: 'normalGlow',
+    title: 'Glow подсветки нормалей',
+    enabled: true,
+    description:
+      'Мягкий ореол вокруг освещённых по карте нормалей участков PNG-ресурсов. Цвет источника сохраняется и умножается на цвет свечения.',
+    controls: [
+      number('strength', 'Сила свечения', 0, 4, 0.1, 0.8),
+      number('radius', 'Радиус размытия', 0, 32, 0.5, 6, 'px'),
+      number('threshold', 'Порог подсветки', 0, 3, 0.05, 0.65),
+      number('softness', 'Мягкость порога', 0, 1, 0.05, 0.2),
+      number('visualOpacity', 'Непрозрачность ореола', 0, 1, 0.05, 1),
+      color('color', 'Цвет свечения', 0xffffff),
     ],
   },
   {
@@ -145,6 +163,7 @@ export const shaderDefinitions: readonly ShaderDefinition[] = [
     controls: [
       number('threshold', 'Порог яркости', 0, 1, 0.05, 0.65),
       number('strength', 'Сила сияния', 0, 2, 0.1, 0.5),
+      number('visualOpacity', 'Непрозрачность сияния', 0, 1, 0.05, 1),
       number('blur', 'Радиус размытия', 1, 12, 0.5, 4, 'px'),
     ],
   },

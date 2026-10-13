@@ -6,6 +6,9 @@ import {
   terrainTextureOrientationIndex,
   terrainTextureWorldSize,
 } from './TerrainChunkMesh';
+import { createSceneLighting } from './SceneLighting';
+import { createShaderSettings } from './ShaderSettings';
+import type { TerrainGlowSource } from './TerrainGlowSource';
 
 describe('terrain chunk material coordinates', () => {
   it('preserves source aspect ratio in world-space tiles', () => {
@@ -34,6 +37,65 @@ describe('terrain chunk material coordinates', () => {
 });
 
 describe('terrain chunk material settings', () => {
+  it('uploads multiple world lights beside the normal map and clears them on global disable', () => {
+    const program = vi.spyOn(GlProgram, 'from').mockReturnValue({} as GlProgram);
+    const mesh = new TerrainChunkMesh({
+      fieldTexture: Texture.WHITE,
+      soilTexture: Texture.WHITE,
+      rockTexture: Texture.WHITE,
+      rockAlphaTexture: null,
+      rockTextureFormat: 'albedo',
+      chunkOriginMeters: [0, 0],
+      chunkSizeMeters: [8, 8],
+      fieldSize: [12, 12],
+      smoothing: { enabled: true, quality: 4 },
+      orientation: 'sequential',
+    });
+    try {
+      mesh.setMaterialMaps({ height: Texture.WHITE, normal: Texture.WHITE });
+      const settings = createShaderSettings();
+      mesh.setLighting(
+        createSceneLighting(settings, { x: 1, y: 2 }, [], 0, [
+          { position: [6, 7], radius: 2, intensity: 3, color: 0xff0000 },
+        ]),
+      );
+      const values = (mesh as unknown as { uniforms: { uniforms: Record<string, unknown> } })
+        .uniforms.uniforms;
+      expect(values.uMaterialMapsReady).toBe(1);
+      expect(values.uLightCount).toBe(2);
+      expect(Array.from((values.uLights as Float32Array).slice(0, 4))).toEqual([6, 7, 2, 3]);
+      expect(Array.from((values.uLightColors as Float32Array).slice(0, 4))).toEqual([1, 0, 0, 1]);
+      const glow: TerrainGlowSource = {
+        mask: Texture.WHITE,
+        worldToMask: [0.5, 0, 0, 0.5, 0, 0],
+        haloBasis: [2, 0, 0, 2],
+        bounds: [-1, -1, 6, 6],
+        strength: 2,
+        opacity: 0.25,
+        color: 0x00ff00,
+      };
+      mesh.setLighting(createSceneLighting(settings, null, [], 0, [], [glow]));
+      expect(values.uLightCount).toBe(0);
+      expect(values.uGlowCount).toBe(1);
+      expect(Array.from((values.uGlowMatrices as Float32Array).slice(0, 4))).toEqual([
+        0.5, 0, 0, 0.5,
+      ]);
+      expect(Array.from((values.uGlowColors as Float32Array).slice(0, 4))).toEqual([0, 1, 0, 1]);
+      const shader = (mesh as unknown as { shader: { resources: Record<string, unknown> } }).shader;
+      expect(shader.resources.uGlowMask0).toBe(Texture.WHITE.source);
+      settings.enabled = false;
+      mesh.setLighting(createSceneLighting(settings, { x: 1, y: 2 }, [], 0, []));
+      expect(values.uLightCount).toBe(0);
+      expect(values.uGlowCount).toBe(0);
+      expect(shader.resources.uGlowMask0).toBe(Texture.EMPTY.source);
+      expect(values.uLightingEnabled).toBe(0);
+      expect((values.uLights as Float32Array).every((value) => value === 0)).toBe(true);
+    } finally {
+      mesh.destroy();
+      program.mockRestore();
+    }
+  });
+
   it('updates the sample tier and mirrors material settings to a minimap instance', () => {
     const program = vi.spyOn(GlProgram, 'from').mockReturnValue({} as GlProgram);
     const mesh = new TerrainChunkMesh({

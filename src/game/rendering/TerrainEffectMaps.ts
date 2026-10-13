@@ -13,7 +13,7 @@ function surface() {
   return { canvas, context };
 }
 
-/** Low-resolution maps in world coordinates, independent of camera scale. */
+/** Ambient depth and heat maps; directional light is evaluated by the terrain material shader. */
 export class TerrainEffectMaps {
   private base = surface();
   private light = surface();
@@ -23,7 +23,6 @@ export class TerrainEffectMaps {
   private grid: TerrainGrid | null = null;
   private baseSettingsKey = '';
   private baseVersion = -1;
-  private lightKey = '';
   private heatKey = '';
   private heatGrid: TerrainGrid | null = null;
 
@@ -39,7 +38,6 @@ export class TerrainEffectMaps {
     const { canvas, context } = this.base;
     const sx = canvas.width / width;
     const sy = canvas.height / height;
-    const activeLights = explosions.filter((item) => time - item.timeSeconds < 0.65);
     if (settings.effects.lightmap.enabled) {
       const settingsKey = `${value('lightmap', 'ambient')}:${value('lightmap', 'depth')}`;
       const fullRebuild = this.grid !== terrain || this.baseSettingsKey !== settingsKey;
@@ -78,31 +76,11 @@ export class TerrainEffectMaps {
         this.baseSettingsKey = settingsKey;
         this.baseVersion = terrain.version;
       }
-      const key = `${terrain.version}:${settingsKey}`;
-      const lightKey = `${key}:${activeLights.length}:${activeLights.at(-1)?.event.resolution.explosion.sourceProjectileId}:${activeLights.length ? Math.floor(time * 30) : 'idle'}:${value('lightmap', 'flash')}:${value('lightmap', 'radius')}`;
-      if (changed || lightKey !== this.lightKey) {
+      if (changed) {
         const ctx = this.light.context;
         ctx.globalCompositeOperation = 'copy';
         ctx.drawImage(canvas, 0, 0);
-        ctx.globalCompositeOperation = 'lighter';
-        ctx.save();
-        ctx.scale(sx, sy);
-        for (const item of activeLights) {
-          const { x, y } = item.event.resolution.explosion.position;
-          const radius = value('lightmap', 'radius');
-          const intensity = Math.min(
-            1,
-            value('lightmap', 'flash') * (1 - Math.max(0, time - item.timeSeconds) / 0.65),
-          );
-          const gradient = ctx.createRadialGradient(x, y, 0, x, y, radius);
-          gradient.addColorStop(0, `rgba(255,210,145,${intensity})`);
-          gradient.addColorStop(1, 'rgba(255,140,70,0)');
-          ctx.fillStyle = gradient;
-          ctx.fillRect(x - radius, y - radius, radius * 2, radius * 2);
-        }
-        ctx.restore();
         this.lightTexture.source.update();
-        this.lightKey = lightKey;
       }
     }
     if (settings.effects.heat.enabled) {

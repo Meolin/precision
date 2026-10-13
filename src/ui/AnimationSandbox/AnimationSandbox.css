@@ -564,7 +564,50 @@
   gap: 7px;
   text-align: left;
   background: #121a1b;
-  border-color: var(--border);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+}
+.sandbox-workspace .stage-card-select {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  text-align: left;
+  background: transparent;
+  border: 0;
+}
+.sandbox-workspace .animation-layer-delete,
+.sandbox-workspace .animation-layer-normal {
+  display: grid;
+  place-items: center;
+  flex: 0 0 24px;
+  width: 24px;
+  min-height: 24px;
+  padding: 3px;
+  color: var(--muted);
+  background: transparent;
+}
+.sandbox-workspace .animation-layer-delete:hover:not(:disabled) {
+  color: #f5af73;
+  background: #f5af7318;
+}
+.sandbox-workspace .animation-layer-normal:hover:not(:disabled),
+.sandbox-workspace .animation-layer-normal.has-normal-map {
+  color: #aa9cff;
+  background: #aa9cff24;
+  border-color: #aa9cff80;
+}
+.normal-map-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 6px 0;
+}
+.normal-map-controls small {
+  flex-basis: 100%;
+  overflow-wrap: anywhere;
 }
 .stage-card.is-selected {
   border-color: var(--accent);
@@ -872,8 +915,74 @@
   gap: 3px;
 }
 .inspector-section .paired-number-field input {
-  width: 50%;
+  width: 100%;
   min-width: 0;
+}
+
+.editor-numeric-input {
+  display: inline-flex;
+  align-items: stretch;
+  min-width: 0;
+  gap: 2px;
+  vertical-align: middle;
+}
+.editor-numeric-input > input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.inspector-section .editor-numeric-input > input {
+  appearance: textfield;
+}
+.inspector-section .editor-numeric-input > input::-webkit-inner-spin-button,
+.inspector-section .editor-numeric-input > input::-webkit-outer-spin-button {
+  appearance: none;
+  margin: 0;
+}
+.editor-number-steppers {
+  display: none;
+  flex: 0 0 18px;
+  flex-direction: column;
+}
+.inspector-section .editor-number-steppers {
+  display: flex;
+}
+.sandbox-workspace .editor-numeric-input .editor-number-steppers > button {
+  flex: 1;
+  min-height: 12px;
+  padding: 0 2px;
+  font: 10px/1 var(--mono);
+  border-radius: 2px;
+}
+.sandbox-workspace .inspector-keyframe-button {
+  flex: 0 0 24px;
+  padding: 2px;
+  min-width: 24px;
+  font: 14px/1 var(--mono);
+  color: var(--muted);
+}
+.inspector-keyframe-button.animated {
+  border-color: #85d7e877;
+}
+.sandbox-workspace .inspector-keyframe-button[aria-pressed='true'] {
+  color: var(--accent);
+  background: #203537;
+  border-color: var(--accent);
+}
+.inspector-section .editor-numeric-input {
+  width: 100%;
+}
+.paired-number-field > div > .editor-numeric-input {
+  flex: 1 1 0;
+}
+.field-grid > .paired-number-field:has(.inspector-keyframe-button) {
+  grid-column: 1 / -1;
+}
+.inspector-color-keyframe {
+  display: flex;
+  gap: 4px;
+}
+.inspector-color-keyframe input {
+  flex: 1;
 }
 .inspector-section label.inline-check {
   flex-direction: row;
@@ -1984,6 +2093,70 @@
 }
 .resource-panel .stage-card small {
   font-size: 10px;
+}
+.resource-panel .stage-card.is-effect-owner {
+  position: relative;
+  border-left: 3px solid #ae8fde;
+}
+.resource-panel .stage-card.is-dependent {
+  position: relative;
+  flex-shrink: 0;
+  width: calc(100% - 18px);
+  min-height: 34px;
+  margin-left: 18px;
+  padding: 3px 5px;
+  border-color: #ad8cda50;
+  border-left: 3px solid #ae8fde;
+  background: #ad8cda14;
+}
+.resource-panel .stage-card.is-dependent::before,
+.resource-panel .stage-card.is-dependent::after {
+  content: '';
+  position: absolute;
+  pointer-events: none;
+  border-color: #ae8fde80;
+}
+.resource-panel .stage-card.is-dependent::before {
+  left: -13px;
+  top: -6px;
+  bottom: -6px;
+  border-left: 1px solid #ae8fde80;
+}
+.resource-panel .stage-card.is-dependent::after {
+  left: -13px;
+  top: 50%;
+  width: 10px;
+  border-top: 1px solid #ae8fde80;
+}
+.resource-panel .stage-card.is-last-dependent::before {
+  bottom: 50%;
+}
+.resource-panel .stage-card.is-dependent.is-related {
+  background: #ad8cda22;
+}
+.resource-panel .stage-card.is-dependent.is-selected {
+  border-color: #c3a8e8;
+  background: #ad8cda35;
+}
+.resource-panel .stage-card.is-dependent .stage-thumb {
+  width: 20px;
+  height: 20px;
+  flex-basis: 20px;
+  border-color: #ad8cda50;
+  background: #ad8cda18;
+}
+.resource-panel .stage-card.is-dependent .stage-thumb > b {
+  font-size: 14px;
+}
+.resource-panel .stage-card.is-dependent strong {
+  font-size: 10px;
+}
+.resource-panel .stage-card.is-dependent small {
+  font-size: 9px;
+  color: #c3a8e8;
+}
+.resource-panel .stage-card.is-dependent .stage-card-copy {
+  gap: 1px;
 }
 .missing-asset-badge {
   font-size: 9px;

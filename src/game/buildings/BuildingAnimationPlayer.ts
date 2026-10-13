@@ -7,6 +7,7 @@ import {
   Sprite,
   Texture,
   UniformGroup,
+  type Renderer,
 } from 'pixi.js';
 import type {
   BuildingAnimationBlendMode,
@@ -25,6 +26,13 @@ import { buildingTransitionVertex, buildingTransitionFragment } from './Building
 import { animationTextureAssets, isImageStage } from './BuildingAnimationEffects';
 import { animationResourceEnabled } from './BuildingAnimationTransform';
 import { BuildingAnimationEffectRenderer } from './BuildingAnimationEffectRenderer';
+import {
+  sampleBuildingAnimationLights,
+  type BuildingLightPlacement,
+} from './BuildingAnimationLights';
+import { BuildingGlowMasks } from './BuildingGlowMasks';
+import { BuildingNormalMapFilter } from './BuildingNormalMapFilter';
+import type { TerrainLightingSettings } from '../rendering/TerrainLightingSettings';
 
 export type BuildingTextureResolver = (assetId: string) => string | Texture | Promise<Texture>;
 
@@ -94,6 +102,7 @@ export class BuildingAnimationPlayer {
   private config: BuildingAnimationConfig;
   private sprites = new Map<string, Sprite>();
   private effects = new BuildingAnimationEffectRenderer();
+  private glowMasks = new BuildingGlowMasks();
   private loadRevision = 0;
   private progress = 0;
   private hitbox = new Graphics();
@@ -101,6 +110,7 @@ export class BuildingAnimationPlayer {
   private outgoingTransition = createTransitionFilter();
   private ownedTextures = new Set<Texture>();
   private assetTextures = new Map<string, Texture>();
+  private normalFilters = new Map<string, BuildingNormalMapFilter>();
   private ghost = new Sprite();
   private onionStageIndex: number | null = null;
   private disposed = false;
@@ -131,11 +141,15 @@ export class BuildingAnimationPlayer {
     const assetIdsChanged =
       JSON.stringify([
         animationTextureAssets(this.config),
-        this.config.stages.filter(isImageStage).map((stage) => [stage.id, stage.assetId]),
+        this.config.stages
+          .filter(isImageStage)
+          .map((stage) => [stage.id, stage.assetId, stage.normalMapAssetId]),
       ]) !==
       JSON.stringify([
         animationTextureAssets(config),
-        config.stages.filter(isImageStage).map((stage) => [stage.id, stage.assetId]),
+        config.stages
+          .filter(isImageStage)
+          .map((stage) => [stage.id, stage.assetId, stage.normalMapAssetId]),
       ]);
     this.config = structuredClone(config);
     this.effects.sync(this.config);
@@ -216,6 +230,8 @@ export class BuildingAnimationPlayer {
       for (const result of results) if (result?.owned) result.texture.destroy(true);
       return;
     }
+    for (const filter of this.normalFilters.values()) filter.destroy();
+    this.normalFilters.clear();
     for (const sprite of this.sprites.values()) sprite.destroy();
     this.effects.setTextures(new Map());
     this.assetTextures.clear();
@@ -232,6 +248,14 @@ export class BuildingAnimationPlayer {
       results.flatMap((result) => (result ? [[result.id, result.texture] as const] : [])),
     );
     this.effects.setTextures(this.assetTextures);
+    for (const stage of stages) {
+      const sprite = this.sprites.get(stage.id);
+      const normal = stage.normalMapAssetId
+        ? this.assetTextures.get(stage.normalMapAssetId)
+        : undefined;
+      if (sprite && normal)
+        this.normalFilters.set(stage.id, new BuildingNormalMapFilter(sprite, normal));
+    }
     this.arrangeSprites();
     this.applyTextureOptimization();
     this.drawHitbox();
@@ -250,6 +274,40 @@ export class BuildingAnimationPlayer {
     return this.config.transitions.find(
       (transition) => transition.fromStageId === from?.id && transition.toStageId === to?.id,
     );
+  }
+
+  getLightSources(placement: BuildingLightPlacement) {
+    return this.disposed
+      ? []
+      : sampleBuildingAnimationLights(this.config, this.progress, placement);
+  }
+
+  setLighting(settings: TerrainLightingSettings, placement: BuildingLightPlacement): void {
+    if (this.disposed) return;
+    for (const [id, filter] of this.normalFilters) {
+      const sprite = this.sprites.get(id);
+      if (!sprite) continue;
+      const others = (sprite.filters ?? []).filter((item) => item !== filter);
+      if (settings.enabled && sprite.visible) {
+        filter.update(settings, placement);
+        sprite.filters = [filter, ...others];
+      } else sprite.filters = others.length ? others : null;
+      sprite.filters?.forEach((item, index, filters) => {
+        item.blendMode = index === filters.length - 1 ? sprite.blendMode : 'normal';
+      });
+    }
+  }
+
+  getGlowSources(renderer: Renderer, placement: BuildingLightPlacement) {
+    return this.disposed
+      ? []
+      : this.glowMasks.collect(
+          renderer,
+          this.config,
+          this.progress,
+          placement,
+          (id) => this.sprites.get(id) ?? this.effects.generators.get(id),
+        );
   }
 
   setProgress(progress: number): void {
@@ -396,6 +454,9 @@ export class BuildingAnimationPlayer {
     this.loadRevision++;
     this.incomingTransition.filter.destroy();
     this.outgoingTransition.filter.destroy();
+    this.glowMasks.destroy();
+    for (const filter of this.normalFilters.values()) filter.destroy();
+    this.normalFilters.clear();
     this.effects.destroy();
     this.container.destroy({ children: true });
     for (const texture of this.ownedTextures) texture.destroy(true);

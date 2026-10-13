@@ -39,9 +39,13 @@ export function GameScene({
   const renderer = useRef<SceneRenderer | null>(null);
   useLayoutEffect(() => {
     if (!isInitialised || !root.current || !app.renderer) return;
-    const scene = new SceneRenderer(root.current, onBuildingAssets);
+    const scene = new SceneRenderer(root.current, app.renderer, onBuildingAssets);
     const pixiRenderer = app.renderer;
-    const postrender = { postrender: () => scene.markRendered() };
+    const postrender = {
+      postrender: () => {
+        if (pixiRenderer.renderingToScreen) scene.markRendered();
+      },
+    };
     pixiRenderer.runners.postrender.add(postrender);
     renderer.current = scene;
     return () => {

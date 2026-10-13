@@ -1,4 +1,4 @@
-import { Assets, Container, Graphics, Sprite, Text, type Texture } from 'pixi.js';
+import { Assets, Container, Graphics, Sprite, Text, type Texture, type Renderer } from 'pixi.js';
 import type { GameRuntime } from '../core/GameRuntime';
 import { muzzlePosition } from '../entities/Cannon';
 import { lerp } from '../math/Vec2';
@@ -12,7 +12,8 @@ import cannonBaseUrl from '../assets/example_base.png';
 import { ScenePostProcessing } from './ScenePostProcessing';
 import type { ShaderSettings } from './ShaderSettings';
 import { shaderValue } from './ShaderSettings';
-import type { TerrainLightingBlendMode, TerrainLightingDisplay } from './TerrainLightingSettings';
+import type { TerrainLightSource } from './TerrainLightingSettings';
+import { createSceneLighting } from './SceneLighting';
 import { MinimapRenderer } from './MinimapRenderer';
 import type { TerrainSmoothingSettings } from './TerrainSmoothingSettings';
 import type { TerrainTextureSettings } from './TerrainTextureSettings';
@@ -83,6 +84,7 @@ export class SceneRenderer {
 
   constructor(
     private parent: Container,
+    private pixiRenderer: Renderer,
     private onBuildingAssets?: (status: BuildingAnimationAssetStatus) => void,
   ) {
     void Assets.load<Texture>(cannonBaseUrl).then((texture) => {
@@ -106,12 +108,14 @@ export class SceneRenderer {
       background: this.background,
       terrain: this.terrain.container,
       cannonBases: this.cannonBases,
+      buildings: this.buildingLayer,
     });
+    // Animation test entities receive the same scene passes as the game artwork.
+    this.content.addChild(this.buildingLayer);
     this.world.addChild(
       this.content,
       this.labels,
       this.trajectory,
-      this.buildingLayer,
       this.units,
       this.bodies,
       this.selection,
@@ -151,20 +155,55 @@ export class SceneRenderer {
     this.world.scale.set(ppm);
     if (state.terrain !== this.terrainIdentity) this.minimap.clearTerrain();
     this.terrain.update(state.terrain, terrainSmoothing, terrainTexture, ppm);
-    const cursorLight = runtime.getCursorPosition();
-    const displayModes: readonly TerrainLightingDisplay[] = ['final', 'albedo', 'height', 'normal'];
-    const blendModes: readonly TerrainLightingBlendMode[] = ['multiply', 'add', 'screen'];
-    this.terrain.setLighting({
-      enabled: shaders.enabled && shaders.effects.terrainLighting.enabled,
-      intensity: shaderValue(shaders, 'terrainLighting', 'intensity'),
-      radius: shaderValue(shaders, 'terrainLighting', 'radius'),
-      normalStrength: shaderValue(shaders, 'terrainLighting', 'normalStrength'),
-      ambient: shaderValue(shaders, 'terrainLighting', 'ambient'),
-      color: shaderValue(shaders, 'terrainLighting', 'lightColor'),
-      blendMode: blendModes[shaderValue(shaders, 'terrainLighting', 'blendMode')] ?? 'multiply',
-      display: displayModes[shaderValue(shaders, 'terrainLighting', 'display')] ?? 'final',
-      position: cursorLight ? [cursorLight.x, cursorLight.y] : [-1000, -1000],
-    });
+    this.drawBuildingPreview(
+      buildingPreview,
+      state.terrain.findSurfaceY.bind(state.terrain),
+      config.world.widthMeters,
+    );
+    const entityLights: TerrainLightSource[] = this.buildingLayer.visible
+      ? (this.buildingPlayer?.getLightSources({
+          position: [this.buildingLayer.x, this.buildingLayer.y],
+          scale: [this.buildingLayer.scale.x, this.buildingLayer.scale.y],
+          opacity: this.buildingLayer.alpha,
+        }) ?? [])
+      : [];
+    const entityGlows =
+      shaders.enabled && this.buildingLayer.visible
+        ? (this.buildingPlayer?.getGlowSources(this.pixiRenderer, {
+            position: [this.buildingLayer.x, this.buildingLayer.y],
+            scale: [this.buildingLayer.scale.x, this.buildingLayer.scale.y],
+            opacity: this.buildingLayer.alpha,
+          }) ?? [])
+        : [];
+    if (shaders.enabled && shaders.effects.glow.enabled)
+      for (const projectile of state.projectiles) {
+        const point = lerp(
+          projectile.previousPosition,
+          projectile.position,
+          runtime.interpolationAlpha,
+        );
+        entityLights.push({
+          position: [point.x, point.y],
+          radius: Math.max(1, projectile.radius * 6),
+          intensity: shaderValue(shaders, 'glow', 'strength'),
+          color: shaderValue(shaders, 'glow', 'color'),
+        });
+      }
+    const lighting = createSceneLighting(
+      shaders,
+      runtime.getCursorPosition(),
+      runtime.getRecentExplosions(),
+      runtime.presentationTimeSeconds,
+      entityLights,
+      entityGlows,
+    );
+    this.terrain.setLighting(lighting);
+    if (this.buildingLayer.visible)
+      this.buildingPlayer?.setLighting(lighting, {
+        position: [this.buildingLayer.x, this.buildingLayer.y],
+        scale: [this.buildingLayer.scale.x, this.buildingLayer.scale.y],
+        opacity: this.buildingLayer.alpha,
+      });
     this.drawFallingTerrain(
       state.fallingTerrain,
       state.terrain.cellSizeMeters,
@@ -175,11 +214,6 @@ export class SceneRenderer {
     this.fallingTerrain.visible = options.terrainVisual;
     this.minimap.draw(runtime, controls, this.terrain, width, height);
     this.damagePopups.update(runtime.getDamagePopups(), runtime.presentationTimeSeconds, pixel);
-    this.drawBuildingPreview(
-      buildingPreview,
-      state.terrain.findSurfaceY.bind(state.terrain),
-      config.world.widthMeters,
-    );
     const staticKey = `${width}:${height}:${ppm}:${config.world.widthMeters}:${config.world.heightMeters}:${options.grid}:${state.terrain.cellSizeMeters}`;
     if (this.staticKey !== staticKey) {
       this.staticKey = staticKey;

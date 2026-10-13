@@ -172,3 +172,46 @@ export function sampleAnimationStage(
   }
   return sampled;
 }
+
+/** Explicit inspector keys use the same constraints, snapping and IDs as auto-key. */
+export function insertAnimationKeyframe(
+  config: BuildingAnimationConfig,
+  stageId: string,
+  property: BuildingAnimationTrackProperty,
+  progress: number,
+  snap: boolean,
+  value?: number,
+  createId?: () => string,
+): void {
+  const stage = config.stages.find((item) => item.id === stageId);
+  if (!stage) return;
+  const sampled =
+    value ??
+    sampleBuildingTrack(
+      config.tracks.find((track) => track.stageId === stageId && track.property === property),
+      progress,
+      defaultTrackValue(stage, property),
+    );
+  editAnimationValue(config, stageId, property, sampled, progress, snap, true, createId);
+}
+
+export function animationKeyframeState(
+  config: BuildingAnimationConfig,
+  stageIds: string[],
+  properties: BuildingAnimationTrackProperty[],
+  progress: number,
+  snap: boolean,
+): { active: boolean; animated: boolean } {
+  const time = snapAnimationTime(progress, config, snap);
+  const tracks = stageIds.flatMap((stageId) =>
+    properties.map((property) =>
+      config.tracks.find((track) => track.stageId === stageId && track.property === property),
+    ),
+  );
+  return {
+    active:
+      tracks.length > 0 &&
+      tracks.every((track) => track?.keys.some((key) => Math.abs(key.time - time) < 0.00001)),
+    animated: tracks.some((track) => !!track?.keys.length),
+  };
+}

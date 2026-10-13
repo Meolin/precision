@@ -5,6 +5,7 @@ import {
 } from '../../game/buildings/BuildingAnimationConfig';
 import { createAnimationEffectStage } from '../../game/buildings/BuildingAnimationEffects';
 import { importAnimationImages } from './AnimationImageImport';
+import { createEmptyBuildingAnimationLibrary } from '../../game/buildings/BuildingAnimationLibrary';
 
 const artwork = {
   name: 'final.png',
@@ -31,6 +32,16 @@ function documentWithKeys() {
 }
 
 describe('PNG add and replace', () => {
+  it('initializes geometry from the first PNG in an empty entity', () => {
+    const empty = createEmptyBuildingAnimationLibrary('new-entity').animations[0]!.config;
+    const { config } = importAnimationImages(empty, [artwork], 'construction', 'add');
+    expect(config.stages).toHaveLength(1);
+    expect(config.stages[0]!.milestone).toBe(0);
+    expect(config.canvas).toEqual({ width: 100, height: 200 });
+    expect(config.origin).toEqual({ x: 50, y: 190 });
+    expect(validateBuildingAnimationConfig(config)).toEqual({ valid: true, errors: [] });
+    expect(empty.stages).toEqual([]);
+  });
   it('adds unique artwork without changing existing keys, geometry or transitions', () => {
     const original = documentWithKeys();
     const { config, stages } = importAnimationImages(

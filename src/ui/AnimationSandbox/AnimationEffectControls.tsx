@@ -20,7 +20,12 @@ import {
   liveParticleBirths,
 } from '../../game/buildings/BuildingAnimationParticles';
 import { animationResourceEnabled } from '../../game/buildings/BuildingAnimationTransform';
-import { NumericInput, TextInput } from './EditorInput';
+import {
+  InspectorKeyframeButton,
+  NumericInput,
+  TextInput,
+  type NumericKeyframeControl,
+} from './EditorInput';
 
 export type AddAnimationEffect = (
   kind: Exclude<AnimationMediaKind, 'image'>,
@@ -159,12 +164,16 @@ export function AnimationEffectControls({
   progress,
   onPatch,
   onTexture,
+  keyframeControl,
+  colorKeyframe,
 }: {
   stage: BuildingAnimationStage;
   config: BuildingAnimationConfig;
   progress: number;
   onPatch: (patch: Partial<BuildingAnimationStage>) => void;
   onTexture: (file: File) => void;
+  keyframeControl: (property: AnimationEffectProperty) => NumericKeyframeControl;
+  colorKeyframe: { active: boolean; animated: boolean; onInsert: () => void };
 }) {
   const plan = useMemo(() => {
     const resource = config.stages.find((item) => item.id === stage.id);
@@ -194,6 +203,7 @@ export function AnimationEffectControls({
               max={parameter.max}
               step={parameter.step}
               onCommit={(value) => onPatch({ [property]: value })}
+              keyframe={keyframeControl(property)}
             />
           </label>
         );
@@ -263,20 +273,24 @@ export function AnimationEffectControls({
       {effectProperties(stage).includes('fxRed') ? (
         <label>
           COLOR · RGB KEYFRAMES
-          <input
-            type="color"
-            value={color}
-            onChange={(event) => {
-              const color = event.target.value,
-                value = parseInt(color.slice(1), 16);
-              onPatch({
-                color,
-                fxRed: value >> 16,
-                fxGreen: (value >> 8) & 255,
-                fxBlue: value & 255,
-              });
-            }}
-          />
+          <span className="inspector-color-keyframe">
+            <input
+              type="color"
+              aria-label="COLOR · RGB KEYFRAMES"
+              value={color}
+              onChange={(event) => {
+                const color = event.target.value,
+                  value = parseInt(color.slice(1), 16);
+                onPatch({
+                  color,
+                  fxRed: value >> 16,
+                  fxGreen: (value >> 8) & 255,
+                  fxBlue: value & 255,
+                });
+              }}
+            />
+            <InspectorKeyframeButton label="COLOR · RGB" {...colorKeyframe} />
+          </span>
         </label>
       ) : null}
       {stage.kind === 'particles' ? (
@@ -434,7 +448,7 @@ export function AnimationEffectControls({
           <details className="effect-settings-group" open>
             <summary>Внешний вид</summary>
             <div className="effect-group-content">
-              {fields(['fxSize'])}
+              {fields(['fxSize', 'fxVisualOpacity'])}
               <details>
                 <summary>Текстура и спрайт-лист</summary>
                 <div className="effect-group-content">
@@ -591,7 +605,7 @@ export function AnimationEffectControls({
                 >
                   ＋ color point
                 </button>
-                <button onClick={() => onPatch({ colorCurve: [] })}>Use birth RGB</button>
+                <button onClick={() => onPatch({ colorCurve: [] })}>Use animated RGB</button>
               </div>
             </div>
           </details>
@@ -635,13 +649,16 @@ export function AnimationEffectControls({
         fields(effectProperties(stage))
       )}
       <small>
-        ◷ включает анимацию параметра, ◆ добавляет ключ. Mix фильтра регулирует смешивание исходного
-        и обработанного изображения.
+        ◇ добавляет ключ на текущем времени, ◆ означает существующий ключ. Mix фильтра регулирует
+        смешивание исходного и обработанного изображения.
       </small>
       {stage.kind === 'particles' ? (
         <small>
           Параметры рождения фиксируются при эмиссии. При заполненном лимите новые частицы
-          пропускаются; живые сохраняются.
+          пропускаются; живые сохраняются. Seed, бюджет, сетка атласа и кривые возраста — общие
+          настройки слоя без ключей. Размер, RGB, мерцание, растяжение и след меняются у живых
+          частиц на текущем времени. Color over life заменяет RGB; Use animated RGB возвращает цвет
+          из ключей.
         </small>
       ) : null}
     </div>

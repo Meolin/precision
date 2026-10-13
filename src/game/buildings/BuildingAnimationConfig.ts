@@ -47,6 +47,7 @@ export const buildingAnimationTrackProperties = [
   'fxSize',
   'fxRadius',
   'fxStrength',
+  'fxVisualOpacity',
   'fxDirection',
   'fxGravityAngle',
   'fxEmitterRadius',
@@ -140,6 +141,8 @@ export interface BuildingAnimationStage extends Partial<Record<AnimationEffectPr
   id: string;
   name: string;
   assetId: string;
+  /** Optional normal-map texture for an image resource; stored as a stable asset path. */
+  normalMapAssetId?: string;
   milestone: number;
   inPoint: number;
   outPoint: number;
@@ -327,7 +330,6 @@ export function validateBuildingAnimationConfig(
     errors.push('Texture scaleMode is invalid.');
   if (![1, 2, 4, 8, 16].includes(config.textureOptimization.anisotropy))
     errors.push('Texture anisotropy is invalid.');
-  if (config.stages.length < 1) errors.push('At least one stage is required.');
 
   const soundIds = new Set<string>();
   for (const sound of Array.isArray(config.sounds) ? config.sounds : []) {
@@ -416,6 +418,14 @@ export function validateBuildingAnimationConfig(
       errors.push(`Stage ${index + 1} assetId cannot be a blob URL.`);
     if (assetIds.has(stage.assetId)) errors.push(`assetId "${stage.assetId}" is duplicated.`);
     assetIds.add(stage.assetId);
+    if (
+      stage.normalMapAssetId !== undefined &&
+      (!isImageStage(stage) ||
+        typeof stage.normalMapAssetId !== 'string' ||
+        !stage.normalMapAssetId.trim() ||
+        stage.normalMapAssetId.startsWith('blob:'))
+    )
+      errors.push(`Stage ${index + 1} normalMapAssetId must be a stable image resource path.`);
     if (!finite(stage.milestone) || stage.milestone < 0 || stage.milestone > 1)
       errors.push(`Stage ${index + 1} milestone must be between 0 and 1.`);
     if (isImageStage(stage) && stage.milestone <= previousMilestone)

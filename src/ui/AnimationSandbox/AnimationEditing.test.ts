@@ -11,8 +11,18 @@ import {
   renameAnimationAsset,
   resizeAnimationDuration,
   minimumAnimationDuration,
+  insertAnimationKeyframe,
+  animationKeyframeState,
 } from './AnimationEditing';
 import { AnimationHistory } from './AnimationHistory';
+import {
+  createAnimationEffectStage,
+  stageTrackProperties,
+  normalizeAnimationLayers,
+  effectParameter,
+  animationEffectParameters,
+  type AnimationEffectProperty,
+} from '../../game/buildings/BuildingAnimationEffects';
 
 function preview(): BuildingAnimationPreview {
   return {
@@ -29,6 +39,59 @@ function preview(): BuildingAnimationPreview {
 }
 
 describe('shared animation editing', () => {
+  it('inserts and samples keys for every supported generator and filter parameter', () => {
+    const config = createDefaultBuildingAnimationConfig();
+    const image = config.stages[0]!;
+    const stages = [
+      createAnimationEffectStage(config, 'particles', 'particles'),
+      createAnimationEffectStage(config, 'aura', 'light'),
+      createAnimationEffectStage(config, 'ring', 'ring'),
+      ...(['glow', 'blur', 'distort', 'outline', 'ripple', 'heat', 'color'] as const).map((type) =>
+        createAnimationEffectStage(config, type, 'filter', type, image.id),
+      ),
+    ];
+    config.stages.push(...stages);
+    normalizeAnimationLayers(config);
+    for (const stage of stages)
+      for (const property of stageTrackProperties(stage)) {
+        const value =
+          property in animationEffectParameters
+            ? effectParameter(stage, property as AnimationEffectProperty).min +
+              (effectParameter(stage, property as AnimationEffectProperty).max -
+                effectParameter(stage, property as AnimationEffectProperty).min) /
+                2
+            : property === 'opacity'
+              ? 0.5
+              : 2;
+        insertAnimationKeyframe(config, stage.id, property, 0.2, false, value);
+        insertAnimationKeyframe(config, stage.id, property, 0.8, false, value);
+        expect(sampleAnimationStage(config, stage.id, 0.5)![property]).toBeCloseTo(value);
+      }
+    expect(validateBuildingAnimationConfig(config).valid).toBe(true);
+  });
+  it('shows snapped key state, inserts sampled values and respects locked stages', () => {
+    const config = createDefaultBuildingAnimationConfig();
+    const stage = config.stages[0]!;
+    editAnimationValue(config, stage.id, 'x', 0, 0, false, true);
+    editAnimationValue(config, stage.id, 'x', 100, 1, false, true);
+    insertAnimationKeyframe(config, stage.id, 'x', 0.25, true);
+    expect(config.tracks[0]!.keys[1]!.value).toBe(25);
+    expect(animationKeyframeState(config, [stage.id], ['x'], 0.249, true)).toEqual({
+      active: true,
+      animated: true,
+    });
+    expect(animationKeyframeState(config, [stage.id], ['x'], 0.5, true)).toEqual({
+      active: false,
+      animated: true,
+    });
+    expect(animationKeyframeState(config, [stage.id], ['y'], 0.25, true)).toEqual({
+      active: false,
+      animated: false,
+    });
+    stage.locked = true;
+    insertAnimationKeyframe(config, stage.id, 'y', 0.25, false, 12);
+    expect(config.tracks).toHaveLength(1);
+  });
   it('keeps markers, keys and audio synchronized in seconds when the composition is extended', () => {
     const config = createDefaultBuildingAnimationConfig();
     config.markers = [{ id: 'event', name: 'Event', time: 0.25 }];

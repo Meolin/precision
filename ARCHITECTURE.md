@@ -73,8 +73,29 @@ FireCommand → fireInstallation → ProjectileState → advanceProjectile
 `TerrainLayer` держит эти renderer-only ресурсы и передаёт их chunk meshes. Геометрический
 градиент берётся из worker-built поля текущего рельефа, включая разрушенные края;
 `TerrainChunkMesh` объединяет его с нормалью материала и считает диффузный свет на GPU.
-Положение курсора и настройки света приходят из client/UI, не входят в `GameState` и не
-влияют на collision или симуляцию.
+`SceneLighting` собирает свет под курсором, вспышки из `RecentExplosion`, Aura/Light через
+`BuildingAnimationPlayer.getLightSources` и свечение снарядов. Источники заданы в мировых метрах;
+chunk отбирает до 32 пересекающих его радиусом источников по вкладу и загружает uniform-массивы.
+`BuildingAnimationLights` использует те же key sampling/матрицы, что видимые слои, и учитывает
+Hidden/Solo, clip, pivot, масштаб и opacity сущности. `TerrainEffectMaps` хранит только фоновую
+карту глубины и марево: вспышки не дублируются в постобработке.
+Glow передаётся отдельно через `BuildingAnimationPlayer.getGlowSources`. `BuildingGlowMasks`
+владеет копиями render nodes и переиспользуемыми RenderTexture; оригиналы не изменяются и
+не переподчиняются. Захватывается исходная альфа изображений/генераторов, включая переходы
+стадий, геометрию живых частиц/атласа/кольца и основную opacity, без визуальной opacity и
+декоративных фильтров. Маска ограничена 1024 пикселями по длинной стороне. `TerrainChunkMesh`
+получает до четырёх пересекающих chunk масок, world→UV и basis ореола; те же 48 выборок, что
+Glow, задают интенсивность и направление света по контуру. Самостоятельный центральный
+точечный источник Glow исключён. GPU readback отсутствует. Ресурсы освобождаются при удалении
+источника/уничтожении player; offscreen render не подтверждает публикацию terrain на экран.
+Источники, настройки и presentation time не входят в `GameState` и не влияют на collision или симуляцию.
+`fxVisualOpacity` — опциональный числовой параметр/track процедурных слоёв и Glow в schema v9,
+с default 1 для существующих документов. Player применяет его только к видимым генераторам
+и alpha ореола внутри Glow shader, отдельно от общего Mix; `BuildingAnimationLights` не включает его в силу источника.
+Промежуточные filter passes используют normal на пустой render texture, финальный pass
+сохраняет blend mode ресурса, включая Add/Screen. Глобальные
+`visualOpacity` у lightmap/glow/bloom управляют только вспышками и постобработкой свечения,
+с default 1 при восстановлении прежних settings.json.
 
 Pixi получает состояние от runtime через `GameCanvas`/`GameScene`. `TerrainLayer` читает журнал dirty-прямоугольников, объединяет изменения по chunk и передаёт Web Worker material-область с halo. Worker строит компактное поле signed-distance/material/shade, а один прямоугольный mesh каждого затронутого chunk обновляет его независимо. Канал R кодирует приближённое знаковое расстояние в пределах четырёх клеток от границы; локальный фильтр сглаживает лестницу, сохраняя знак в центрах клеток и исходные расстояния около тонких элементов. Все texel поля непрозрачны, чтобы premultiplied-alpha upload не стирал расстояния в Air; для точной маски shader читает знак R в центре ячейки. Билинейное восстановление не создаёт новых экстремумов между соседними ячейками; padding исходных материалов и dirty-инвалидация учитывают радиус расстояния и фильтра. Shader восстанавливает контур, применяет экранное AA и семплирует исходную material texture в мировых координатах. Миникарта использует отдельные mesh-инстансы с теми же полями и material texture. CPU occupancy остаётся единственным источником collision, GPU readback отсутствует. Preview использует те же helpers полёта и impact, но делает временную копию terrain для скола. React получает только компактную телеметрию с ограниченной частотой, а не обновляет дерево на каждый игровой кадр.
 
@@ -109,7 +130,20 @@ alpha-content bounds, размер sprite в world units, редактируем
 тестовое здание живёт в слое `SceneRenderer`, использует текущие camera/terrain/world units и не
 изменяет `GameState`. Все 40 переходов используют один player как в sandbox,
 так и в production-вызове; VFX и звуковые клипы отделены от transition schema.
-`stages.kind` различает image (также legacy без kind), particles, light, ring и filter. Фильтр ссылается
+`stages.kind` различает image (также legacy без kind), particles, light, ring и filter.
+Изображение может ссылаться на отдельную карту нормалей через `normalMapAssetId`.
+Общий перечень texture assets включает обе текстуры, в том числе для сохранённых пресетов;
+Blob хранится в существующем draft/source registry. `BuildingAnimationPlayer` владеет
+`BuildingNormalMapFilter`, освобождает его при перезагрузке ресурсов и destroy.
+Фильтр применяется перед переходом и дочерними эффектами, получает point lights из
+`SceneRenderer` в мировых метрах и учитывает текущую матрицу изображения. Simulation не участвует.
+Глобальный `normalGlow` передаётся через `createSceneLighting`. `BuildingNormalMapFilter`
+извлекает маску только из прямого normal-map освещения с учётом альфы исходного изображения,
+размывает её на GPU и объединяет с освещённым изображением перед переходами и дочерними
+эффектами. Padding соответствует размитию в экранных пикселях; только финальный проход
+использует blend mode ресурса. Временные render textures возвращаются в `TexturePool`
+после каждого кадра, внутренние фильтры освобождаются вместе с normal-map фильтром.
+Дочерний фильтр ссылается
 на ресурс через `parentId`; цепочки filter → filter и dangling references не допускаются.
 Изображения сохраняют собственную последовательность milestones/переходов; VFX участвуют только
 в стеке слоёв, интервалах видимости и ключах. `BuildingAnimationEffects` задаёт параметры,

@@ -22,7 +22,10 @@ function mockDatabase(initial?: AnimationDraft) {
             return request;
           },
           put: (draft: AnimationDraft, key: string) => {
-            expect(key).toBe('current');
+            expect([
+              'current',
+              ...(draft.library ? [`entity:${draft.library.entityId}`] : []),
+            ]).toContain(key);
             stored = structuredClone(draft);
             queueMicrotask(() => transaction.oncomplete?.());
           },
@@ -44,6 +47,23 @@ function mockDatabase(initial?: AnimationDraft) {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('local animation draft storage', () => {
+  it('restores the normal-map binding and its PNG alongside the image', async () => {
+    mockDatabase();
+    const config = createDefaultBuildingAnimationConfig();
+    const stage = config.stages[0]!;
+    stage.normalMapAssetId = 'art_normal.png';
+    await saveAnimationDraft({
+      config,
+      position: null,
+      sources: {
+        [stage.assetId]: new Blob(['art'], { type: 'image/png' }),
+        [stage.normalMapAssetId]: new Blob(['normals'], { type: 'image/png' }),
+      },
+    });
+    const restored = await loadAnimationDraft();
+    expect(restored?.config.stages[0]!.normalMapAssetId).toBe('art_normal.png');
+    expect(await restored?.sources['art_normal.png']?.text()).toBe('normals');
+  });
   it('restores all animation tabs and their shared PNG and audio files after reopening', async () => {
     mockDatabase();
     const library = createBuildingAnimationLibrary();

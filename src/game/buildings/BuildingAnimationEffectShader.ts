@@ -13,7 +13,7 @@ import { buildingTransitionVertex } from './BuildingTransitionShader';
 const fragment = `precision highp float;
 in vec2 vTextureCoord; out vec4 finalColor;
 uniform sampler2D uTexture; uniform vec4 uInputSize; uniform vec4 uInputClamp;
-uniform float uMode; uniform float uMix; uniform float uTime;
+uniform float uMode; uniform float uMix; uniform float uVisualOpacity; uniform float uTime;
 uniform vec2 uCenter; uniform vec4 uParams; uniform vec4 uAdjust; uniform vec3 uColor; uniform vec4 uBasis; uniform vec4 uMetric;
 vec2 toPixels(vec2 point){return vec2(uBasis.x*point.x+uBasis.z*point.y,uBasis.y*point.x+uBasis.w*point.y);}
 vec4 readAt(vec2 uv){if(any(lessThan(uv,uInputClamp.xy))||any(greaterThan(uv,uInputClamp.zw)))return vec4(0.);return texture(uTexture,uv);}
@@ -42,6 +42,7 @@ void main(){
   float coverage=0.;float sum=0.;
   for(int ring=1;ring<=4;ring++){for(int i=0;i<12;i++){float angle=float(i)*6.2831853/12.;vec2 offset=toPixels(vec2(cos(angle),sin(angle))*radius*float(ring)/4.)*uInputSize.zw;float alpha=readAt(uv+offset).a;coverage=max(coverage,alpha);sum+=alpha;}}
   float alpha=uMode<5.5?clamp(sum/48.*strength*2.,0.,1.):coverage*strength;
+  if(uMode<5.5)alpha*=clamp(uVisualOpacity,0.,1.);
   alpha*=1.-base.a;effect=base+vec4(uColor*alpha,alpha);
  }
  finalColor=mix(base,effect,clamp(uMix,0.,1.));
@@ -50,6 +51,7 @@ function createUniforms(mode: number) {
   return new UniformGroup({
     uMode: { value: mode, type: 'f32' },
     uMix: { value: 1, type: 'f32' },
+    uVisualOpacity: { value: 1, type: 'f32' },
     uTime: { value: 0, type: 'f32' },
     uCenter: { value: new Float32Array([0, 0]), type: 'vec2<f32>' },
     uParams: { value: new Float32Array([1, 1, 80, 2]), type: 'vec4<f32>' },

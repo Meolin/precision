@@ -2,7 +2,12 @@ import { GlProgram, Mesh, MeshGeometry, Shader, Texture, UniformGroup } from 'pi
 import type { TerrainSmoothingSettings } from './TerrainSmoothingSettings';
 import type { TerrainTextureFormat, TerrainTextureOrientation } from './TerrainTextureSettings';
 import type { MaterialMaps } from './MaterialMaps';
-import type { TerrainLightingSettings } from './TerrainLightingSettings';
+import {
+  maxTerrainLights,
+  terrainLightsForBounds,
+  type TerrainLightingSettings,
+} from './TerrainLightingSettings';
+import { maxTerrainGlowSources, terrainGlowsForBounds } from './TerrainGlowSource';
 import { terrainMaterialVisuals, type TerrainVisualColor } from './terrainMaterialVisuals';
 import { TerrainMaterialId } from '../terrain/TerrainMaterialId';
 import {
@@ -62,16 +67,31 @@ uniform vec3 uSoilEdge;
 uniform vec3 uRockBody;
 uniform vec3 uRockSurface;
 uniform vec3 uRockEdge;
-uniform vec2 uLightPosition;
-uniform float uLightIntensity;
-uniform float uLightRadius;
+uniform vec4 uLights[${maxTerrainLights}];
+uniform vec4 uLightColors[${maxTerrainLights}];
+uniform int uLightCount;
+${Array.from({ length: maxTerrainGlowSources }, (_, i) => `uniform sampler2D uGlowMask${i};`).join('\n')}
+uniform int uGlowCount;
+uniform vec4 uGlowMatrices[${maxTerrainGlowSources}];
+uniform vec4 uGlowOffsets[${maxTerrainGlowSources}];
+uniform vec4 uGlowBases[${maxTerrainGlowSources}];
+uniform vec4 uGlowColors[${maxTerrainGlowSources}];
+uniform vec4 uGlowParams[${maxTerrainGlowSources}];
+uniform vec4 uGlowBounds[${maxTerrainGlowSources}];
 uniform float uNormalStrength;
 uniform float uAmbient;
-uniform vec3 uLightColor;
 uniform float uLightBlendMode;
 uniform float uLightingEnabled;
 uniform float uMaterialMapsReady;
 uniform float uDisplayMode;
+
+float glowAlpha(int index, vec2 point) {
+  vec4 m = uGlowMatrices[index];
+  vec2 uv = vec2(m.x * point.x + m.z * point.y, m.y * point.x + m.w * point.y) + uGlowOffsets[index].xy;
+  if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) return 0.0;
+  ${Array.from({ length: maxTerrainGlowSources }, (_, i) => `if (index == ${i}) return textureLod(uGlowMask${i}, uv, 0.0).a;`).join('\n  ')}
+  return 0.0;
+}
 
 float tileHash(vec2 tile) {
   if (uDensityTiling < 0.5)
@@ -231,8 +251,10 @@ void main(void) {
     if (uDisplayMode < 1.5) color = rockTexture;
     else if (uDisplayMode < 2.5) color = vec3(textureGrad(uHeightMap, rockUv, rockDx, rockDy).r);
     else color = textureGrad(uNormalMap, rockUv, rockDx, rockDy).rgb;
-  } else if (uLightingEnabled > 0.5 && uMaterialMapsReady > 0.5) {
-    vec3 mapped = textureGrad(uNormalMap, rockUv, rockDx, rockDy).rgb * 2.0 - 1.0;
+  } else if (uLightingEnabled > 0.5) {
+    vec3 mapped = uMaterialMapsReady > 0.5
+      ? textureGrad(uNormalMap, rockUv, rockDx, rockDy).rgb * 2.0 - 1.0
+      : vec3(0.0, 0.0, 1.0);
     vec2 materialNormal = transpose(uvJacobian) * mapped.xy;
     vec2 contourGradient = vec2(
       texture(uField, vFieldUv + vec2(uFieldTexelSize.x, 0.0)).r -
@@ -244,12 +266,40 @@ void main(void) {
     float rim = 1.0 - smoothstep(0.0, 0.12, abs(centerCoverage - 0.5));
     vec2 contourNormal = -normalize(contourGradient + vec2(0.00001)) * rim;
     vec3 normal = normalize(vec3(materialNormal * uNormalStrength * rockMix + contourNormal * 0.85, 1.0));
-    vec2 toLight = uLightPosition - vWorldPosition;
-    float distanceToLight = length(toLight);
-    vec3 lightDirection = normalize(vec3(toLight, max(2.0, uLightRadius * 0.35)));
-    float attenuation = 1.0 - smoothstep(0.0, uLightRadius, distanceToLight);
-    float diffuse = max(dot(normal, lightDirection), 0.0);
-    vec3 directLight = uLightColor * (uLightIntensity * attenuation * diffuse);
+    vec3 directLight = vec3(0.0);
+    for (int i = 0; i < ${maxTerrainLights}; i++) {
+      if (i >= uLightCount) break;
+      vec4 light = uLights[i];
+      vec2 toLight = light.xy - vWorldPosition;
+      float distanceToLight = length(toLight);
+      if (distanceToLight >= light.z) continue;
+      vec3 lightDirection = normalize(vec3(toLight, max(0.1, light.z * 0.35)));
+      float attenuation = 1.0 - smoothstep(0.0, light.z, distanceToLight);
+      float diffuse = max(dot(normal, lightDirection), 0.0);
+      directLight += uLightColors[i].rgb * (light.w * attenuation * diffuse);
+    }
+    for (int g = 0; g < ${maxTerrainGlowSources}; g++) {
+      if (g >= uGlowCount) break;
+      vec4 bounds = uGlowBounds[g];
+      if (any(lessThan(vWorldPosition, bounds.xy)) || any(greaterThan(vWorldPosition, bounds.xy + bounds.zw))) continue;
+      vec4 basis = uGlowBases[g];
+      float sum = 0.0;
+      vec3 directions = vec3(0.0);
+      for (int ring = 1; ring <= 4; ring++) {
+        for (int i = 0; i < 12; i++) {
+          float angle = float(i) * 6.2831853 / 12.0;
+          vec2 axis = vec2(cos(angle), sin(angle)) * float(ring) / 4.0;
+          vec2 offset = vec2(basis.x * axis.x + basis.z * axis.y, basis.y * axis.x + basis.w * axis.y);
+          float alpha = glowAlpha(g, vWorldPosition + offset);
+          sum += alpha;
+          directions += normalize(vec3(offset, uGlowParams[g].z)) * alpha;
+        }
+      }
+      float halo = clamp(sum / 48.0 * uGlowParams[g].x * 2.0, 0.0, 1.0) *
+        (1.0 - glowAlpha(g, vWorldPosition)) * uGlowParams[g].y;
+      vec3 direction = normalize(directions + vec3(0.0, 0.0, 0.00001));
+      directLight += uGlowColors[g].rgb * halo * max(dot(normal, direction), 0.0);
+    }
     vec3 ambientColor = color * uAmbient;
     if (uLightBlendMode < 0.5) color = color * (vec3(uAmbient) + directLight);
     else if (uLightBlendMode < 1.5) color = ambientColor + directLight;
@@ -412,12 +462,50 @@ export class TerrainChunkMesh {
       uRockBody: { value: normalizedColor(rock.body), type: 'vec3<f32>' },
       uRockSurface: { value: normalizedColor(rock.surface), type: 'vec3<f32>' },
       uRockEdge: { value: normalizedColor(rock.edge), type: 'vec3<f32>' },
-      uLightPosition: { value: new Float32Array([-1000, -1000]), type: 'vec2<f32>' },
-      uLightIntensity: { value: 1.2, type: 'f32' },
-      uLightRadius: { value: 24, type: 'f32' },
+      uLights: {
+        value: new Float32Array(maxTerrainLights * 4),
+        type: 'vec4<f32>',
+        size: maxTerrainLights,
+      },
+      uLightColors: {
+        value: new Float32Array(maxTerrainLights * 4),
+        type: 'vec4<f32>',
+        size: maxTerrainLights,
+      },
+      uLightCount: { value: 0, type: 'i32' },
+      uGlowCount: { value: 0, type: 'i32' },
+      uGlowMatrices: {
+        value: new Float32Array(maxTerrainGlowSources * 4),
+        type: 'vec4<f32>',
+        size: maxTerrainGlowSources,
+      },
+      uGlowOffsets: {
+        value: new Float32Array(maxTerrainGlowSources * 4),
+        type: 'vec4<f32>',
+        size: maxTerrainGlowSources,
+      },
+      uGlowBases: {
+        value: new Float32Array(maxTerrainGlowSources * 4),
+        type: 'vec4<f32>',
+        size: maxTerrainGlowSources,
+      },
+      uGlowColors: {
+        value: new Float32Array(maxTerrainGlowSources * 4),
+        type: 'vec4<f32>',
+        size: maxTerrainGlowSources,
+      },
+      uGlowParams: {
+        value: new Float32Array(maxTerrainGlowSources * 4),
+        type: 'vec4<f32>',
+        size: maxTerrainGlowSources,
+      },
+      uGlowBounds: {
+        value: new Float32Array(maxTerrainGlowSources * 4),
+        type: 'vec4<f32>',
+        size: maxTerrainGlowSources,
+      },
       uNormalStrength: { value: 1, type: 'f32' },
       uAmbient: { value: 0.48, type: 'f32' },
-      uLightColor: { value: new Float32Array([1, 1, 1]), type: 'vec3<f32>' },
       uLightBlendMode: { value: 0, type: 'f32' },
       uLightingEnabled: { value: 0, type: 'f32' },
       uMaterialMapsReady: { value: 0, type: 'f32' },
@@ -444,6 +532,12 @@ export class TerrainChunkMesh {
         uHeightSampler: Texture.WHITE.source.style,
         uNormalMap: Texture.WHITE.source,
         uNormalSampler: Texture.WHITE.source.style,
+        ...Object.fromEntries(
+          Array.from({ length: maxTerrainGlowSources }, (_, i) => [
+            `uGlowMask${i}`,
+            Texture.EMPTY.source,
+          ]),
+        ),
         terrainUniforms: this.uniforms,
       },
     });
@@ -527,16 +621,87 @@ export class TerrainChunkMesh {
 
   setLighting(settings: TerrainLightingSettings): void {
     this.lighting = settings;
-    this.uniforms.uniforms.uLightPosition = new Float32Array(settings.position);
-    this.uniforms.uniforms.uLightIntensity = settings.intensity;
-    this.uniforms.uniforms.uLightRadius = Math.max(0.001, settings.radius);
+    const lights = settings.enabled
+      ? terrainLightsForBounds(
+          settings.lights,
+          this.options.chunkOriginMeters,
+          this.options.chunkSizeMeters,
+        )
+      : [];
+    const data = this.uniforms.uniforms.uLights as Float32Array;
+    const colors = this.uniforms.uniforms.uLightColors as Float32Array;
+    data.fill(0);
+    colors.fill(0);
+    lights.forEach((light, index) => {
+      const offset = index * 4;
+      data.set([light.position[0], light.position[1], light.radius, light.intensity], offset);
+      colors.set(
+        [
+          ((light.color >> 16) & 0xff) / 255,
+          ((light.color >> 8) & 0xff) / 255,
+          (light.color & 0xff) / 255,
+          1,
+        ],
+        offset,
+      );
+    });
+    this.uniforms.uniforms.uLightCount = lights.length;
+    const glows = settings.enabled
+      ? terrainGlowsForBounds(
+          settings.glows,
+          this.options.chunkOriginMeters,
+          this.options.chunkSizeMeters,
+        )
+      : [];
+    this.uniforms.uniforms.uGlowCount = glows.length;
+    for (let i = 0; i < maxTerrainGlowSources; i++) {
+      const glow = glows[i];
+      const texture = glow?.mask ?? Texture.EMPTY;
+      this.shader.resources[`uGlowMask${i}`] = texture.source;
+      const offset = i * 4;
+      for (const name of [
+        'uGlowMatrices',
+        'uGlowOffsets',
+        'uGlowBases',
+        'uGlowColors',
+        'uGlowParams',
+        'uGlowBounds',
+      ])
+        (this.uniforms.uniforms[name] as Float32Array).fill(0, offset, offset + 4);
+      if (!glow) continue;
+      (this.uniforms.uniforms.uGlowMatrices as Float32Array).set(
+        glow.worldToMask.slice(0, 4),
+        offset,
+      );
+      (this.uniforms.uniforms.uGlowOffsets as Float32Array).set(
+        glow.worldToMask.slice(4, 6),
+        offset,
+      );
+      (this.uniforms.uniforms.uGlowBases as Float32Array).set(glow.haloBasis, offset);
+      (this.uniforms.uniforms.uGlowBounds as Float32Array).set(glow.bounds, offset);
+      (this.uniforms.uniforms.uGlowColors as Float32Array).set(
+        [
+          ((glow.color >> 16) & 255) / 255,
+          ((glow.color >> 8) & 255) / 255,
+          (glow.color & 255) / 255,
+          1,
+        ],
+        offset,
+      );
+      const height = Math.max(
+        0.1,
+        Math.max(
+          Math.hypot(glow.haloBasis[0], glow.haloBasis[1]),
+          Math.hypot(glow.haloBasis[2], glow.haloBasis[3]),
+        ) * 0.35,
+      );
+      (this.uniforms.uniforms.uGlowParams as Float32Array).set(
+        [glow.strength, glow.opacity, height, 0],
+        offset,
+      );
+    }
     this.uniforms.uniforms.uNormalStrength = settings.normalStrength;
     this.uniforms.uniforms.uAmbient = settings.ambient;
-    this.uniforms.uniforms.uLightColor = new Float32Array([
-      ((settings.color >> 16) & 0xff) / 255,
-      ((settings.color >> 8) & 0xff) / 255,
-      (settings.color & 0xff) / 255,
-    ]);
     this.uniforms.uniforms.uLightBlendMode =
       settings.blendMode === 'add' ? 1 : settings.blendMode === 'screen' ? 2 : 0;
     this.uniforms.uniforms.uLightingEnabled = settings.enabled ? 1 : 0;

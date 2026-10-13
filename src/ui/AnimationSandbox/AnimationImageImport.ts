@@ -5,6 +5,7 @@ import type {
 } from '../../game/buildings/BuildingAnimationConfig';
 import {
   isImageStage,
+  animationTextureAssets,
   normalizeAnimationLayers,
 } from '../../game/buildings/BuildingAnimationEffects';
 import { createDefaultBuildingTransition } from '../../game/buildings/BuildingAnimationTransitions';
@@ -14,6 +15,25 @@ export interface AnimationImageSource {
   width: number;
   height: number;
   bounds: BuildingAnimationBounds;
+}
+
+/** Attach a separate texture without modifying artwork, geometry or animation keys. */
+export function attachAnimationNormalMap(
+  original: BuildingAnimationConfig,
+  stageId: string,
+  reservedAssetIds: Iterable<string> = [],
+): { config: BuildingAnimationConfig; assetId: string } {
+  const config = structuredClone(original);
+  const stage = config.stages.find((item) => item.id === stageId);
+  if (!stage || !isImageStage(stage) || stage.locked)
+    throw new Error('Карту нормалей можно загрузить только для незаблокированного PNG-слоя.');
+  const reserved = new Set([...reservedAssetIds, ...animationTextureAssets(config)]);
+  const base = stage.assetId.replace(/\.[^/.]+$/, '');
+  let assetId = `${base}_normal.png`;
+  let suffix = 1;
+  while (reserved.has(assetId)) assetId = `${base}_normal-${++suffix}.png`;
+  stage.normalMapAssetId = assetId;
+  return { config, assetId };
 }
 
 /** Adding artwork preserves existing timing, keys and canvas. Replacement is explicit. */
@@ -32,7 +52,11 @@ export function importAnimationImages(
     throw new Error(
       'Нет места для новой стадии. Увеличьте длительность анимации перед добавлением.',
     );
-  const assetIds = new Set([...reservedAssetIds, ...config.stages.map((stage) => stage.assetId)]);
+  const assetIds = new Set([
+    ...reservedAssetIds,
+    ...config.stages.map((stage) => stage.assetId),
+    ...animationTextureAssets(config),
+  ]);
   const ids = new Set(config.stages.map((stage) => stage.id));
   const stages: BuildingAnimationStage[] = images.map((image, index) => {
     const base =

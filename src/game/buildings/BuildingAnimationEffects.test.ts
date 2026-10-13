@@ -9,6 +9,7 @@ import {
   createAnimationEffectStage,
   normalizeAnimationLayers,
   removeAnimationLayers,
+  canRemoveAnimationLayers,
   reorderAnimationLayer,
 } from './BuildingAnimationEffects';
 import { sampleAnimationParticles } from './BuildingAnimationParticles';
@@ -27,6 +28,39 @@ function composition() {
 }
 
 describe('animation procedural media', () => {
+  it('round-trips visual-opacity keys and rejects values outside 0..1', () => {
+    const { config, emitter, glow } = composition();
+    glow.fxVisualOpacity = 0;
+    editAnimationValue(
+      config,
+      emitter.id,
+      'fxVisualOpacity',
+      1,
+      0,
+      false,
+      true,
+      () => 'visual-start',
+    );
+    editAnimationValue(
+      config,
+      emitter.id,
+      'fxVisualOpacity',
+      0,
+      1,
+      false,
+      true,
+      () => 'visual-end',
+    );
+    const loaded = loadBuildingAnimationConfig(JSON.parse(JSON.stringify(config)));
+    expect(sampleAnimationStage(loaded, emitter.id, 0.5)?.fxVisualOpacity).toBe(0.5);
+    expect(loaded.stages.find((stage) => stage.id === glow.id)?.fxVisualOpacity).toBe(0);
+    expect(validateBuildingAnimationConfig(loaded).valid).toBe(true);
+    glow.fxVisualOpacity = -0.1;
+    expect(validateBuildingAnimationConfig(config).valid).toBe(false);
+    glow.fxVisualOpacity = 1.1;
+    expect(validateBuildingAnimationConfig(config).valid).toBe(false);
+  });
+
   it('round-trips resources, dependencies and parameter keys without external assets', () => {
     const { config, emitter } = composition();
     editAnimationValue(config, emitter.id, 'fxRate', 0, 0, false, true, () => 'rate-start');
@@ -72,6 +106,33 @@ describe('animation procedural media', () => {
     expect(config.stages.some((stage) => stage.id === glow.id)).toBe(false);
     expect(config.tracks).toEqual([]);
     expect(validateBuildingAnimationConfig(config).valid).toBe(true);
+  });
+
+  it('protects locked layers and child filters without partial deletion, and allows an empty composition', () => {
+    const { config, emitter, glow } = composition();
+    glow.parentId = emitter.id;
+    glow.locked = true;
+    const before = structuredClone(config);
+    expect(canRemoveAnimationLayers(config, [emitter.id])).toBe(false);
+    removeAnimationLayers(config, [emitter.id]);
+    expect(config).toEqual(before);
+    expect(canRemoveAnimationLayers(config, [glow.id])).toBe(false);
+    expect(
+      canRemoveAnimationLayers(
+        config,
+        config.stages.map((stage) => stage.id),
+      ),
+    ).toBe(false);
+    glow.locked = false;
+    expect(canRemoveAnimationLayers(config, [emitter.id])).toBe(true);
+    removeAnimationLayers(config, [glow.id]);
+    expect(config.stages.some((stage) => stage.id === emitter.id)).toBe(true);
+    const remaining = config.stages[0]!;
+    config.stages = [remaining];
+    normalizeAnimationLayers(config);
+    removeAnimationLayers(config, [remaining.id]);
+    expect(config.stages).toEqual([]);
+    expect(canRemoveAnimationLayers(config, ['missing'])).toBe(false);
   });
 
   it('reconstructs seeded particles on arbitrary seeks without mutating the composition', () => {

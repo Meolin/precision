@@ -33,11 +33,14 @@ function openDraftDatabase(): Promise<IDBDatabase> {
   });
 }
 
-export async function loadAnimationDraft(): Promise<AnimationDraft | undefined> {
+export async function loadAnimationDraft(entityId?: string): Promise<AnimationDraft | undefined> {
   const database = await openDraftDatabase();
   try {
     const draft = await new Promise<AnimationDraft | undefined>((resolve, reject) => {
-      const request = database.transaction('drafts').objectStore('drafts').get('current');
+      const request = database
+        .transaction('drafts')
+        .objectStore('drafts')
+        .get(entityId ? `entity:${entityId}` : 'current');
       request.onsuccess = () => resolve(request.result as AnimationDraft | undefined);
       request.onerror = () => reject(request.error);
     });
@@ -68,6 +71,8 @@ export async function saveAnimationDraft(draft: AnimationDraft): Promise<void> {
     await new Promise<void>((resolve, reject) => {
       const transaction = database.transaction('drafts', 'readwrite');
       transaction.objectStore('drafts').put(draft, 'current');
+      if (draft.library)
+        transaction.objectStore('drafts').put(draft, `entity:${draft.library.entityId}`);
       transaction.oncomplete = () => resolve();
       transaction.onerror = () => reject(transaction.error);
       transaction.onabort = () => reject(transaction.error);

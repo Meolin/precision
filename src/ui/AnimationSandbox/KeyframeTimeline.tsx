@@ -42,8 +42,10 @@ import {
   isImageStage,
   reorderAnimationLayer,
   stageTrackProperties,
+  canRemoveAnimationLayers,
 } from '../../game/buildings/BuildingAnimationEffects';
 import { moveAnimationClip } from './AnimationEffectEditing';
+import { AnimationLayerDeleteButton } from './AnimationLayerDeleteButton';
 
 interface Props {
   session: AnimationEditorSession;
@@ -61,6 +63,7 @@ interface Props {
   onConfig: (config: BuildingAnimationConfig, progress?: number) => void;
   onProgress: (progress: number) => void;
   onSelectStage: (index: number) => void;
+  onRemoveLayer: (id: string) => void;
   onPlaying: (playing: boolean) => void;
   onLoop: (loop: boolean) => void;
   onSpeed: (speed: number) => void;
@@ -1168,6 +1171,7 @@ export function KeyframeTimeline(props: Props) {
           <label className="ae-compact-field">
             TIME
             <NumericInput
+              label="TIME s"
               value={Number((props.progress * duration).toFixed(3))}
               min={0}
               max={duration}
@@ -1181,6 +1185,7 @@ export function KeyframeTimeline(props: Props) {
           <label className="ae-compact-field">
             DURATION
             <NumericInput
+              label="DURATION s"
               value={duration}
               min={Math.ceil(minimumDuration * 1000) / 1000}
               max={600}
@@ -1499,6 +1504,11 @@ export function KeyframeTimeline(props: Props) {
                         {flag === 'hidden' ? '◉' : flag === 'solo' ? 'S' : 'L'}
                       </button>
                     ))}
+                    <AnimationLayerDeleteButton
+                      name={stage.name}
+                      disabled={!canRemoveAnimationLayers(props.config, [stage.id])}
+                      onDelete={() => props.onRemoveLayer(stage.id)}
+                    />
                   </div>,
                   <div
                     key={`${stage.id}-lane`}

@@ -13,6 +13,13 @@ export const animationEffectParameters = {
   fxSize: { label: 'Particle size / px', value: 4, min: 0.1, max: 100, step: 0.1 },
   fxRadius: { label: 'Radius / px', value: 80, min: 1, max: 1000, step: 1 },
   fxStrength: { label: 'Strength', value: 1, min: -1, max: 10, step: 0.05 },
+  fxVisualOpacity: {
+    label: 'Непрозрачность визуального эффекта',
+    value: 1,
+    min: 0,
+    max: 1,
+    step: 0.05,
+  },
   fxDirection: { label: 'Direction / degrees', value: -90, min: -360, max: 360, step: 1 },
   fxGravityAngle: { label: 'Gravity direction / degrees', value: 90, min: -360, max: 360, step: 1 },
   fxEmitterRadius: { label: 'Emitter radius / px', value: 30, min: 0, max: 2000, step: 1 },
@@ -67,7 +74,7 @@ export const animationFilterCatalog: Record<
 > = {
   glow: {
     label: 'Glow',
-    properties: ['fxRadius', 'fxStrength', 'fxRed', 'fxGreen', 'fxBlue'],
+    properties: ['fxRadius', 'fxStrength', 'fxVisualOpacity', 'fxRed', 'fxGreen', 'fxBlue'],
     strength: { min: 0, max: 10, value: 1, label: 'Glow intensity' },
     radius: { value: 20, label: 'Glow radius / px' },
   },
@@ -152,12 +159,21 @@ export function effectProperties(stage: BuildingAnimationStage): AnimationEffect
       'fxStretch',
       'fxTrail',
       'fxFrameRate',
+      'fxVisualOpacity',
       'fxRed',
       'fxGreen',
       'fxBlue',
     ];
   if (stage.kind === 'light' || stage.kind === 'ring')
-    return ['fxRadius', 'fxStrength', 'fxSoftness', 'fxRed', 'fxGreen', 'fxBlue'];
+    return [
+      'fxRadius',
+      'fxStrength',
+      'fxVisualOpacity',
+      'fxSoftness',
+      'fxRed',
+      'fxGreen',
+      'fxBlue',
+    ];
   if (stage.kind === 'filter') return animationFilterCatalog[stage.filterType!]?.properties ?? [];
   return [];
 }
@@ -347,12 +363,12 @@ export function createAnimationEffectStage(
   return stage;
 }
 
-export function animationTextureAssets(config: BuildingAnimationConfig): string[] {
+export function animationTextureAssets(config: Pick<BuildingAnimationConfig, 'stages'>): string[] {
   return [
     ...new Set(
       config.stages.flatMap((stage) =>
         isImageStage(stage)
-          ? [stage.assetId]
+          ? [stage.assetId, ...(stage.normalMapAssetId ? [stage.normalMapAssetId] : [])]
           : stage.particleTextureId
             ? [stage.particleTextureId]
             : [],
@@ -376,12 +392,25 @@ export function particleTailSeconds(
   return stage.endBehavior === 'fade' ? Math.min(0.5, lifetime) : lifetime;
 }
 
+/** Protect locked resources, including child effects; an empty composition is valid. */
+export function canRemoveAnimationLayers(
+  config: BuildingAnimationConfig,
+  ids: readonly string[],
+): boolean {
+  const removed = new Set(
+    config.stages.filter((stage) => ids.includes(stage.id)).map((stage) => stage.id),
+  );
+  for (const stage of config.stages)
+    if (stage.parentId && removed.has(stage.parentId)) removed.add(stage.id);
+  return removed.size > 0 && !config.stages.some((stage) => stage.locked && removed.has(stage.id));
+}
+
 export function removeAnimationLayers(
   config: BuildingAnimationConfig,
   ids: readonly string[],
 ): void {
+  if (!canRemoveAnimationLayers(config, ids)) return;
   const removed = new Set(ids);
-  if (config.stages.some((stage) => stage.locked && removed.has(stage.id))) return;
   for (const stage of config.stages)
     if (stage.parentId && removed.has(stage.parentId)) removed.add(stage.id);
   config.stages = config.stages.filter((stage) => !removed.has(stage.id));

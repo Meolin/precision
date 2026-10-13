@@ -14,6 +14,64 @@ function setup() {
   return { config, stage };
 }
 describe('particle lifecycle', () => {
+  it('animates appearance on existing burst particles while preserving their birth motion', () => {
+    const { config, stage } = setup();
+    Object.assign(stage, {
+      emissionMode: 'burst',
+      burstCount: 1,
+      fxLifetime: 10,
+      fxSpeed: 0,
+      fxGravity: 0,
+      fxTurbulence: 0,
+      fxWind: 0,
+      sizeCurve: [
+        { age: 0, value: 1 },
+        { age: 1, value: 1 },
+      ],
+      alphaCurve: [
+        { age: 0, value: 1 },
+        { age: 1, value: 1 },
+      ],
+    });
+    for (const [property, from, to] of [
+      ['fxSize', 4, 20],
+      ['fxStretch', 1, 5],
+      ['fxTrail', 0, 0.4],
+      ['fxRed', 0, 255],
+      ['fxGreen', 0, 0],
+      ['fxBlue', 0, 0],
+      ['fxSpeed', 0, 200],
+    ] as const) {
+      editAnimationValue(config, stage.id, property, from, 0, false, true);
+      editAnimationValue(config, stage.id, property, to, 1, false, true);
+    }
+    const plan = createParticlePlan(config, stage);
+    const first = sampleParticleFrame(config, stage, 0.25, plan).particles[0]!;
+    const later = sampleParticleFrame(config, stage, 0.75, plan).particles[0]!;
+    expect(first.id).toBe(later.id);
+    expect(later.size / first.size).toBeCloseTo(2);
+    expect([first.stretch, later.stretch]).toEqual([2, 4]);
+    expect(first.trail).toBeCloseTo(0.1);
+    expect(later.trail).toBeCloseTo(0.3);
+    expect(first.color).toBe(0x400000);
+    expect(later.color).toBe(0xbf0000);
+    expect(later.x).toBe(first.x);
+    expect(later.y).toBe(first.y);
+    expect(sampleParticleFrame(config, stage, 0.25, plan).particles[0]).toEqual(first);
+  });
+  it('integrates animated atlas FPS without rewinding and reproduces frames after seeking', () => {
+    const { config, stage } = setup();
+    Object.assign(stage, { emissionMode: 'burst', burstCount: 1, fxLifetime: 10 });
+    editAnimationValue(config, stage.id, 'fxFrameRate', 12, 0, false, true);
+    editAnimationValue(config, stage.id, 'fxFrameRate', 0, 1, false, true);
+    const plan = createParticlePlan(config, stage);
+    const frameAt = (progress: number) =>
+      sampleParticleFrame(config, stage, progress, plan).particles[0]!.frame;
+    expect(frameAt(0.5)).toBe(18);
+    expect(frameAt(0.75)).toBe(22);
+    expect(frameAt(1)).toBe(24);
+    expect(frameAt(0.5)).toBe(18);
+  });
   it('emits an exact burst at the cursor and drains it after the clip', () => {
     const { config, stage } = setup();
     Object.assign(stage, {

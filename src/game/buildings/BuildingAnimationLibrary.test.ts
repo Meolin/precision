@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   animationLibraryAssetIds,
   createBuildingAnimationLibrary,
+  createEmptyBuildingAnimationLibrary,
   createAnimationVariant,
   loadBuildingAnimationLibrary,
   replaceLibraryAnimation,
@@ -9,6 +10,25 @@ import {
 import { validateBuildingAnimationConfig } from './BuildingAnimationConfig';
 
 describe('entity animation library', () => {
+  it('creates and round trips an entity with three independent empty compositions', () => {
+    const library = createEmptyBuildingAnimationLibrary('new-entity');
+    expect(library.entityId).toBe('new-entity');
+    expect(library.animations.map((entry) => entry.config.timeline.durationSeconds)).toEqual([
+      4, 2, 1,
+    ]);
+    for (const { config } of library.animations) {
+      expect(config.stages).toEqual([]);
+      expect(config.tracks).toEqual([]);
+      expect(config.transitions).toEqual([]);
+      expect(config.sounds).toEqual([]);
+      expect(config.markers).toEqual([]);
+      expect(validateBuildingAnimationConfig(config)).toEqual({ valid: true, errors: [] });
+    }
+    expect(animationLibraryAssetIds(library).size).toBe(0);
+    expect(loadBuildingAnimationLibrary(JSON.parse(JSON.stringify(library)))).toEqual(library);
+    library.animations[0]!.config.canvas.width = 600;
+    expect(library.animations[1]!.config.canvas.width).toBe(1024);
+  });
   it('creates independent construction, idle and destruction compositions with valid single-image variants', () => {
     const library = createBuildingAnimationLibrary();
     expect(library.animations.map((entry) => entry.kind)).toEqual([

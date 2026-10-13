@@ -64,6 +64,7 @@ export interface ParticlePlan {
   sample: ReturnType<typeof animationStageSampler>;
   matrices: Map<number, AnimationMatrix>;
   sourceMatrices: Map<number, AnimationMatrix>;
+  framePhase: (seconds: number) => number;
 }
 export function createParticlePlan(
   config: BuildingAnimationConfig,
@@ -136,7 +137,35 @@ export function createParticlePlan(
       }
     }
   }
-  return { births, sample, matrices: new Map(), sourceMatrices: new Map() };
+  // Integrate animated atlas speed once per plan so changing FPS never rewinds a sprite.
+  const animatedFrames = config.tracks.some(
+    (track) =>
+      track.stageId === stage.id && track.property === 'fxFrameRate' && track.keys.length > 0,
+  );
+  const phases = [0];
+  if (animatedFrames)
+    for (let tick = 0; tick / 120 < duration; tick++) {
+      const a = tick / 120,
+        b = Math.min(duration, (tick + 1) / 120);
+      phases.push(
+        phases[tick]! +
+          ((sample('fxFrameRate', a / duration) + sample('fxFrameRate', b / duration)) * (b - a)) /
+            2,
+      );
+    }
+  const framePhase = (seconds: number) => {
+    if (!animatedFrames || seconds <= 0) return seconds * sample('fxFrameRate', 0);
+    const time = Math.min(duration, seconds),
+      tick = Math.min(Math.floor(time * 120), phases.length - 1);
+    const a = tick / 120;
+    return (
+      phases[tick]! +
+      ((sample('fxFrameRate', a / duration) + sample('fxFrameRate', time / duration)) *
+        (time - a)) /
+        2
+    );
+  };
+  return { births, sample, matrices: new Map(), sourceMatrices: new Map(), framePhase };
 }
 export interface AnimationParticle {
   id: number;
@@ -210,6 +239,7 @@ export function sampleParticleFrame(
     const t = birth.seconds / duration,
       fraction = age / birth.lifetime,
       at = (property: BuildingAnimationTrackProperty) => sample(property, t);
+    const appearance = (property: BuildingAnimationTrackProperty) => sample(property, progress);
     let point = { x: 0, y: 0 };
     const r = random(seed, birth.id, 6),
       q = random(seed, birth.id, 7);
@@ -273,7 +303,7 @@ export function sampleParticleFrame(
       stage.endBehavior === 'fade'
         ? Math.max(0, 1 - Math.max(0, now - stage.outPoint * duration) / 0.5)
         : 1;
-    let color = animationColor(at);
+    let color = animationColor(appearance);
     const colors = stage.colorCurve;
     if (colors?.length) {
       const next = colors.findIndex((item) => item.age >= fraction),
@@ -293,7 +323,7 @@ export function sampleParticleFrame(
       x: point.x + vx * age + (gx * age * age) / 2 + at('fxWind') * age + drift,
       y: point.y + vy * age + (gy * age * age) / 2,
       size:
-        at('fxSize') *
+        appearance('fxSize') *
         (composition ? Math.sqrt(Math.abs(matrix.a * matrix.d - matrix.b * matrix.c)) : 1) *
         (0.7 + random(seed, birth.id, 4) * 0.6) *
         sampleParticleCurve(
@@ -304,14 +334,14 @@ export function sampleParticleFrame(
       alpha:
         sampleParticleCurve(stage.alphaCurve, fraction, (1 - fraction) * (smoke ? 0.14 : 1)) *
         fade *
-        (1 - at('fxFlicker') * (0.5 + 0.5 * Math.sin(age * 18 + phase))),
+        (1 - appearance('fxFlicker') * (0.5 + 0.5 * Math.sin(age * 18 + phase))),
       color,
       rotation: Math.atan2(vy + gy * age, vx + gx * age),
-      stretch: at('fxStretch'),
-      trail: Math.min(age, at('fxTrail')),
+      stretch: appearance('fxStretch'),
+      trail: Math.min(age, appearance('fxTrail')),
       vx: vx + gx * age,
       vy: vy + gy * age,
-      frame: Math.floor(age * at('fxFrameRate')),
+      frame: Math.floor(Math.max(0, plan.framePhase(now) - plan.framePhase(birth.seconds)) + 1e-8),
     });
   }
   result.alive = result.particles.length;
